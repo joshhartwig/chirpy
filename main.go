@@ -104,6 +104,10 @@ func main() {
 	// host/app
 	mux.Handle("/app/", apiCfg.middlewareMetricsInc((http.StripPrefix("/app", http.FileServer(http.Dir(filePathRoot))))))
 
+	mux.HandleFunc("POST /api/chirps", func(w http.ResponseWriter, r *http.Request) {
+		//TODO: See ch5 part6
+	})
+
 	// host/admin/metrics - displays visited count
 	mux.HandleFunc("GET /admin/metrics", apiCfg.middlewareMetricsReport)
 	mux.HandleFunc("POST /admin/reset", apiCfg.middlewareMetricsReset)
