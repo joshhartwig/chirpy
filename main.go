@@ -27,6 +27,11 @@ type User struct {
 	Email      string    `json:"email"`
 }
 
+type CreateChirpRequest struct {
+	Body    string `json:"body"`
+	User_Id string `json:"user_id"`
+}
+
 // used to manage configuration for server
 type apiConfig struct {
 	fileServerHits atomic.Int32
@@ -105,50 +110,6 @@ func main() {
 	mux.Handle("/app/", apiCfg.middlewareMetricsInc((http.StripPrefix("/app", http.FileServer(http.Dir(filePathRoot))))))
 
 	mux.HandleFunc("POST /api/chirps", func(w http.ResponseWriter, r *http.Request) {
-		//TODO: See ch5 part6
-	})
-
-	// host/admin/metrics - displays visited count
-	mux.HandleFunc("GET /admin/metrics", apiCfg.middlewareMetricsReport)
-	mux.HandleFunc("POST /admin/reset", apiCfg.middlewareMetricsReset)
-
-	// /api/reset
-	mux.HandleFunc("GET /api/healthz", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Header().Add("Content-Type", "text/plain;charset=utf-8")
-		io.WriteString(w, "OK")
-	})
-
-	// api/users
-	mux.HandleFunc("POST /api/users", func(w http.ResponseWriter, r *http.Request) {
-		type req struct {
-			Email string `json:"email"`
-		}
-
-		var userReq req
-		if err := json.NewDecoder(r.Body).Decode(&userReq); err != nil {
-			log.Printf("Error decoding request: %s", err)
-		}
-
-		user, err := dbQueries.CreateUser(r.Context(), userReq.Email)
-		if err != nil {
-			log.Printf("error creating user in database %s", err)
-		}
-
-		dbUser := User{
-			ID:         user.ID,
-			Created_At: user.CreatedAt,
-			Updated_At: user.UpdatedAt,
-			Email:      user.Email,
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(201)
-		json.NewEncoder(w).Encode(dbUser)
-	})
-
-	// /api/validate_chirp
-	mux.HandleFunc("POST /api/validate_chirp", func(w http.ResponseWriter, r *http.Request) {
 		badWords := []string{
 			"kerfuffle",
 			"sharbert",
@@ -193,6 +154,45 @@ func main() {
 		sendJSONResponse(w, http.StatusOK, ChirpResponse{
 			Cleaned_Body: chirpReq.Body,
 		})
+	})
+
+	// host/admin/metrics - displays visited count
+	mux.HandleFunc("GET /admin/metrics", apiCfg.middlewareMetricsReport)
+	mux.HandleFunc("POST /admin/reset", apiCfg.middlewareMetricsReset)
+
+	// /api/reset
+	mux.HandleFunc("GET /api/healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Header().Add("Content-Type", "text/plain;charset=utf-8")
+		io.WriteString(w, "OK")
+	})
+
+	// api/users
+	mux.HandleFunc("POST /api/users", func(w http.ResponseWriter, r *http.Request) {
+		type req struct {
+			Email string `json:"email"`
+		}
+
+		var userReq req
+		if err := json.NewDecoder(r.Body).Decode(&userReq); err != nil {
+			log.Printf("Error decoding request: %s", err)
+		}
+
+		user, err := dbQueries.CreateUser(r.Context(), userReq.Email)
+		if err != nil {
+			log.Printf("error creating user in database %s", err)
+		}
+
+		dbUser := User{
+			ID:         user.ID,
+			Created_At: user.CreatedAt,
+			Updated_At: user.UpdatedAt,
+			Email:      user.Email,
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(201)
+		json.NewEncoder(w).Encode(dbUser)
 	})
 
 	log.Printf("serving files from %s on port: %s\n", filePathRoot, port)
