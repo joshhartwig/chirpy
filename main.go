@@ -49,41 +49,6 @@ type apiConfig struct {
 }
 
 /*
-	Middleware
-*/
-
-func (a *apiConfig) incrementFileServerHitsMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Add("Cache-Control", "no-cache")
-		a.fileServerHits.Add(1)
-		next.ServeHTTP(w, r)
-	})
-}
-
-func (a *apiConfig) middlewareMetricsReport(w http.ResponseWriter, r *http.Request) {
-	w.Header().Add("Cache-Control", "no-cache")
-	w.Header().Add("Content-Type", "text/html;charset=utf-8")
-	w.WriteHeader(http.StatusOK)
-	io.WriteString(w, fmt.Sprintf(`
-	<html>
-		<body>
-			<h1>Welcome, Chirpy Admin</h1>
-			<p>Chirpy has been visited %d times!</p>
-		</body>
-	</html>`, a.fileServerHits.Load()))
-}
-
-func (a *apiConfig) middlewareMetricsReset(w http.ResponseWriter, r *http.Request) {
-	if a.platform != "dev" {
-		w.WriteHeader(403)
-		return
-	}
-	a.db.DeleteAllUsers(r.Context())
-	w.WriteHeader(http.StatusOK)
-	a.fileServerHits.Store(0)
-}
-
-/*
 	Main
 */
 
@@ -117,111 +82,20 @@ func main() {
 		Handler: mux,
 	}
 
-	// /app
 	mux.Handle("/app/", apiCfg.incrementFileServerHitsMiddleware((http.StripPrefix("/app", http.FileServer(http.Dir(filePathRoot))))))
 
-	// /api/chirps
-	mux.HandleFunc("POST /api/chirps", func(w http.ResponseWriter, r *http.Request) {
-		badWords := []string{
-			"kerfuffle",
-			"sharbert",
-			"fornax",
-		}
-
-		// sends a json response
-		// sendJSONResponse := func(w http.ResponseWriter, statusCode int, response ChirpResponse) {
-		// 	w.Header().Set("Content-Type", "application/json")
-		// 	w.WriteHeader(statusCode)
-		// 	json.NewEncoder(w).Encode(response)
-		// }
-
-		var chirpReq ChirpRequest
-		if err := json.NewDecoder(r.Body).Decode(&chirpReq); err != nil {
-			log.Printf("Error decoding request: %s", err)
-			sendJSONResponse(w, http.StatusInternalServerError, ChirpResponse{
-				Error: "Failed to decode request body",
-			})
-			return
-		}
-
-		// if length is too large return error
-		if len(chirpReq.Body) > 140 {
-			log.Printf("Chirp body is too long: %d chars", len(chirpReq.Body))
-			sendJSONResponse(w, http.StatusBadRequest, ChirpResponse{
-				Error: "Chirp body exceeds 140 chars",
-			})
-			return
-		}
-
-		// clean the badwords
-		chirpReq.Body = cleanBadWords(chirpReq.Body, badWords)
-
-		// write to database
-		chirp, err := dbQueries.CreateChirp(r.Context(), database.CreateChirpParams{
-			Body:   chirpReq.Body,
-			UserID: chirpReq.User_Id,
-		})
-		if err != nil {
-			log.Printf("error creating chirp in database %s", err)
-		}
-
-		chirpResponse := ChirpResponse{
-			Body:       chirp.Body,
-			Id:         chirp.ID,
-			Created_At: chirp.CreatedAt,
-			Updated_At: chirp.UpdatedAt,
-			UserID:     chirp.UserID,
-		}
-
-		// send response
-		sendJSONResponse(w, 201, chirpResponse)
-	})
-
-	// host/admin/metrics - displays visited count
 	mux.HandleFunc("GET /admin/metrics", apiCfg.middlewareMetricsReport)
 	mux.HandleFunc("POST /admin/reset", apiCfg.middlewareMetricsReset)
 
-	// /api/reset
-	mux.HandleFunc("GET /api/healthz", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Header().Add("Content-Type", "text/plain;charset=utf-8")
-		io.WriteString(w, "OK")
-	})
-
-	// api/users
-	mux.HandleFunc("POST /api/users", func(w http.ResponseWriter, r *http.Request) {
-		type req struct {
-			Email string `json:"email"`
-		}
-
-		var userReq req
-		if err := json.NewDecoder(r.Body).Decode(&userReq); err != nil {
-			log.Printf("Error decoding request: %s", err)
-		}
-
-		user, err := dbQueries.CreateUser(r.Context(), userReq.Email)
-		if err != nil {
-			log.Printf("error creating user in database %s", err)
-		}
-
-		dbUser := User{
-			ID:         user.ID,
-			Created_At: user.CreatedAt,
-			Updated_At: user.UpdatedAt,
-			Email:      user.Email,
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(201)
-		json.NewEncoder(w).Encode(dbUser)
-	})
+	mux.HandleFunc("GET /api/healthz", apiCfg.handleReportHealth)
+	mux.HandleFunc("POST /api/users", apiCfg.handleCreateUser)
+	mux.HandleFunc("POST /api/chirps", apiCfg.handleCreateChirp)
 
 	log.Printf("serving files from %s on port: %s\n", filePathRoot, port)
-	// start the server and check for any errors
 	log.Fatal(srv.ListenAndServe())
 }
 
-// per spec, remove 'bad words'
+// cleanBadWords replaces bad words with "****"
 func cleanBadWords(chirpToBeCleaned string, badWords []string) string {
 	words := strings.Split(chirpToBeCleaned, " ")
 	for idx, word := range words {
@@ -236,8 +110,126 @@ func cleanBadWords(chirpToBeCleaned string, badWords []string) string {
 	return rejoined
 }
 
+// sendJSONResponse sends a JSON response with a status code
 func sendJSONResponse(w http.ResponseWriter, statusCode int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
 	json.NewEncoder(w).Encode(data)
+}
+
+// handleCreateUser creates a new user in the database
+func (a *apiConfig) handleCreateUser(w http.ResponseWriter, r *http.Request) {
+	type req struct {
+		Email string `json:"email"`
+	}
+
+	var userReq req
+	if err := json.NewDecoder(r.Body).Decode(&userReq); err != nil {
+		log.Printf("Error decoding request: %s", err)
+	}
+
+	user, err := a.db.CreateUser(r.Context(), userReq.Email)
+	if err != nil {
+		log.Printf("error creating user in database %s", err)
+	}
+
+	dbUser := User{
+		ID:         user.ID,
+		Created_At: user.CreatedAt,
+		Updated_At: user.UpdatedAt,
+		Email:      user.Email,
+	}
+
+	sendJSONResponse(w, http.StatusCreated, dbUser)
+}
+
+// handleReportHealth responds with "OK" for health check
+func (a *apiConfig) handleReportHealth(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusOK)
+	w.Header().Add("Content-Type", "text/plain;charset=utf-8")
+	io.WriteString(w, "OK")
+}
+
+// handleCreateChirp processes the creation of a chirp
+func (a *apiConfig) handleCreateChirp(w http.ResponseWriter, r *http.Request) {
+	badWords := []string{
+		"kerfuffle",
+		"sharbert",
+		"fornax",
+	}
+
+	var chirpReq ChirpRequest
+	if err := json.NewDecoder(r.Body).Decode(&chirpReq); err != nil {
+		log.Printf("Error decoding request: %s", err)
+		sendJSONResponse(w, http.StatusInternalServerError, ChirpResponse{
+			Error: "Failed to decode request body",
+		})
+		return
+	}
+
+	// if length is too large return error
+	if len(chirpReq.Body) > 140 {
+		log.Printf("Chirp body is too long: %d chars", len(chirpReq.Body))
+		sendJSONResponse(w, http.StatusBadRequest, ChirpResponse{
+			Error: "Chirp body exceeds 140 chars",
+		})
+		return
+	}
+
+	// clean the badwords
+	chirpReq.Body = cleanBadWords(chirpReq.Body, badWords)
+
+	// write to database
+	chirp, err := a.db.CreateChirp(r.Context(), database.CreateChirpParams{
+		Body:   chirpReq.Body,
+		UserID: chirpReq.User_Id,
+	})
+	if err != nil {
+		log.Printf("error creating chirp in database %s", err)
+	}
+
+	chirpResponse := ChirpResponse{
+		Body:       chirp.Body,
+		Id:         chirp.ID,
+		Created_At: chirp.CreatedAt,
+		Updated_At: chirp.UpdatedAt,
+		UserID:     chirp.UserID,
+	}
+
+	// send response
+	sendJSONResponse(w, http.StatusCreated, chirpResponse)
+}
+
+// incrementFileServerHitsMiddleware increments the file server hits counter
+func (a *apiConfig) incrementFileServerHitsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Add("Cache-Control", "no-cache")
+		a.fileServerHits.Add(1)
+		next.ServeHTTP(w, r)
+	})
+}
+
+// middlewareMetricsReport displays metrics in HTML format
+func (a *apiConfig) middlewareMetricsReport(w http.ResponseWriter, r *http.Request) {
+	w.Header().Add("Cache-Control", "no-cache")
+	w.Header().Add("Content-Type", "text/html;charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	io.WriteString(w, fmt.Sprintf(`
+	<html>
+		<body>
+			<h1>Welcome, Chirpy Admin</h1>
+			<p>Chirpy has been visited %d times!</p>
+		</body>
+	</html>`, a.fileServerHits.Load()))
+}
+
+// middlewareMetricsReset resets the file server hits and deletes users in dev mode
+func (a *apiConfig) middlewareMetricsReset(w http.ResponseWriter, r *http.Request) {
+	if a.platform != "dev" {
+		w.WriteHeader(403)
+		return
+	}
+	a.db.DeleteAllUsers(r.Context())
+	w.WriteHeader(http.StatusOK)
+	a.fileServerHits.Store(0)
 }
