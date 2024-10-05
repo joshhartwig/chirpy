@@ -27,9 +27,18 @@ type User struct {
 	Email      string    `json:"email"`
 }
 
-type CreateChirpRequest struct {
-	Body    string `json:"body"`
-	User_Id string `json:"user_id"`
+type ChirpRequest struct {
+	Body    string    `json:"body"`
+	User_Id uuid.UUID `json:"user_id"`
+}
+
+type ChirpResponse struct {
+	Error      string    `json:"error,omitempty"`
+	Body       string    `json:"body,omitempty"`
+	Id         uuid.UUID `json:"id"`
+	Created_At time.Time `json:"created_at"`
+	Updated_At time.Time `json:"updated_at"`
+	UserID     uuid.UUID `json:"user_id"`
 }
 
 // used to manage configuration for server
@@ -39,10 +48,11 @@ type apiConfig struct {
 	platform       string
 }
 
-// middlewareMetricsInc is a middleware function that increments the file server hit counter
-// and adds a "Cache-Control: no-cache" header to the response. It then calls the next handler
-// in the chain.
-func (a *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
+/*
+	Middleware
+*/
+
+func (a *apiConfig) incrementFileServerHitsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Add("Cache-Control", "no-cache")
 		a.fileServerHits.Add(1)
@@ -50,9 +60,6 @@ func (a *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
 	})
 }
 
-// middlewareMetricsReport is an HTTP handler function that sets specific headers
-// and writes an HTML response to the client. The response includes a welcome message
-// and the number of times the file server has been accessed.
 func (a *apiConfig) middlewareMetricsReport(w http.ResponseWriter, r *http.Request) {
 	w.Header().Add("Cache-Control", "no-cache")
 	w.Header().Add("Content-Type", "text/html;charset=utf-8")
@@ -75,6 +82,10 @@ func (a *apiConfig) middlewareMetricsReset(w http.ResponseWriter, r *http.Reques
 	w.WriteHeader(http.StatusOK)
 	a.fileServerHits.Store(0)
 }
+
+/*
+	Main
+*/
 
 func main() {
 	godotenv.Load()              // load env vars
@@ -106,9 +117,10 @@ func main() {
 		Handler: mux,
 	}
 
-	// host/app
-	mux.Handle("/app/", apiCfg.middlewareMetricsInc((http.StripPrefix("/app", http.FileServer(http.Dir(filePathRoot))))))
+	// /app
+	mux.Handle("/app/", apiCfg.incrementFileServerHitsMiddleware((http.StripPrefix("/app", http.FileServer(http.Dir(filePathRoot))))))
 
+	// /api/chirps
 	mux.HandleFunc("POST /api/chirps", func(w http.ResponseWriter, r *http.Request) {
 		badWords := []string{
 			"kerfuffle",
@@ -116,21 +128,12 @@ func main() {
 			"fornax",
 		}
 
-		type ChirpRequest struct {
-			Body string `json:"body"`
-		}
-
-		type ChirpResponse struct {
-			Error        string `json:"error,omitempty"`
-			Cleaned_Body string `json:"cleaned_body,omitempty"`
-		}
-
 		// sends a json response
-		sendJSONResponse := func(w http.ResponseWriter, statusCode int, response ChirpResponse) {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(statusCode)
-			json.NewEncoder(w).Encode(response)
-		}
+		// sendJSONResponse := func(w http.ResponseWriter, statusCode int, response ChirpResponse) {
+		// 	w.Header().Set("Content-Type", "application/json")
+		// 	w.WriteHeader(statusCode)
+		// 	json.NewEncoder(w).Encode(response)
+		// }
 
 		var chirpReq ChirpRequest
 		if err := json.NewDecoder(r.Body).Decode(&chirpReq); err != nil {
@@ -141,6 +144,7 @@ func main() {
 			return
 		}
 
+		// if length is too large return error
 		if len(chirpReq.Body) > 140 {
 			log.Printf("Chirp body is too long: %d chars", len(chirpReq.Body))
 			sendJSONResponse(w, http.StatusBadRequest, ChirpResponse{
@@ -149,11 +153,28 @@ func main() {
 			return
 		}
 
+		// clean the badwords
 		chirpReq.Body = cleanBadWords(chirpReq.Body, badWords)
 
-		sendJSONResponse(w, http.StatusOK, ChirpResponse{
-			Cleaned_Body: chirpReq.Body,
+		// write to database
+		chirp, err := dbQueries.CreateChirp(r.Context(), database.CreateChirpParams{
+			Body:   chirpReq.Body,
+			UserID: chirpReq.User_Id,
 		})
+		if err != nil {
+			log.Printf("error creating chirp in database %s", err)
+		}
+
+		chirpResponse := ChirpResponse{
+			Body:       chirp.Body,
+			Id:         chirp.ID,
+			Created_At: chirp.CreatedAt,
+			Updated_At: chirp.UpdatedAt,
+			UserID:     chirp.UserID,
+		}
+
+		// send response
+		sendJSONResponse(w, 201, chirpResponse)
 	})
 
 	// host/admin/metrics - displays visited count
@@ -213,4 +234,10 @@ func cleanBadWords(chirpToBeCleaned string, badWords []string) string {
 
 	rejoined := strings.Join(words, " ")
 	return rejoined
+}
+
+func sendJSONResponse(w http.ResponseWriter, statusCode int, data interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
+	json.NewEncoder(w).Encode(data)
 }

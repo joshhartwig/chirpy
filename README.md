@@ -1,13 +1,25 @@
-Notes for this project
+# Notes for this project
 
-#sqlc
+# Setup
 
-Always run from the root of the project
-cmd to install `go install github.com/sqlc-dev/sqlc/cmd/sqlc@latest`
-create sqlc.yaml
+This guide provides instructions for setting up and using `sqlc` and `goose` in your project.
+
+## sqlc
+
+### Installation
+
+Always run from the root of the project. Use the following command to install `sqlc`:
+
+```sh
+go install github.com/sqlc-dev/sqlc/cmd/sqlc@latest
+```
+
+### Configuration
+
+Create a `sqlc.yaml` file with the following content:
 
 ```yaml
-#sqlc.yaml
+# sqlc.yaml
 version: "2"
 sql:
   - schema: "sql/schema"
@@ -18,17 +30,53 @@ sql:
         out: "internal/database"
 ```
 
-sqlc docs https://docs.sqlc.dev/en/latest/tutorials/getting-started-postgresql.html
+For more details, refer to the [sqlc documentation](https://docs.sqlc.dev/en/latest/tutorials/getting-started-postgresql.html).
 
-store connection string in .env
-go get `github.com/joho/godotenv`
-```go
-dbUrl := os.GetEnv("DB_URL")
+### Environment Setup
+
+Store the connection string in a `.env` file. Install the `godotenv` package:
+
+```sh
+go get github.com/joho/godotenv
 ```
 
-SQL Open the connection
+Load the environment variable in your Go code:
+
 ```go
-db,err := sql.Open("postgres",dbUrl)
+dbUrl := os.Getenv("DB_URL")
 ```
 
+### Database Connection
 
+Open the SQL connection using the following code:
+
+```go
+db, err := sql.Open("postgres", dbUrl)
+if err != nil {
+    log.Fatal(err)
+}
+```
+
+## Goose
+
+### Workflow
+
+1. Add the new `.sql` file in the `schema` directory.
+2. Run command from db/schema directory `goose postgres "postgres://joshuahartwig:@localhost:5432/chirpy" up` to apply the migration.
+3. Run `sqlc` from root of project to generate the Go code.
+
+should have this dir structure
+```yaml
+project-root/
+├── sql/
+│   ├── schema/
+│   │   ├── 001_users.sql
+│   │   ├── 002_create_chirps_table.sql
+│   ├── queries/
+│   │   ├── users.sql
+│   │   ├── chirps.sql
+├── internal/
+│   ├── database/
+│   │   ├── (generated Go files)
+├── sqlc.yaml
+```
