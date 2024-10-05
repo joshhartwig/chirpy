@@ -14,3 +14,7 @@ RETURNING *;
 -- name: DeleteAllChirps :exec
 DELETE FROM chirps
 RETURNING *;
+
+-- name: GetAllChirps :many
+SELECT *
+FROM chirps;

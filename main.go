@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -87,9 +88,11 @@ func main() {
 	mux.HandleFunc("GET /admin/metrics", apiCfg.middlewareMetricsReport)
 	mux.HandleFunc("POST /admin/reset", apiCfg.middlewareMetricsReset)
 
-	mux.HandleFunc("GET /api/healthz", apiCfg.handleReportHealth)
 	mux.HandleFunc("POST /api/users", apiCfg.handleCreateUser)
 	mux.HandleFunc("POST /api/chirps", apiCfg.handleCreateChirp)
+	mux.HandleFunc("GET /api/chirps/{chirpID}", apiCfg.handleGetChirpsById)
+	mux.HandleFunc("GET /api/healthz", apiCfg.handleReportHealth)
+	mux.HandleFunc("GET /api/chirps", apiCfg.handleGetChirps)
 
 	log.Printf("serving files from %s on port: %s\n", filePathRoot, port)
 	log.Fatal(srv.ListenAndServe())
@@ -115,6 +118,59 @@ func sendJSONResponse(w http.ResponseWriter, statusCode int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
 	json.NewEncoder(w).Encode(data)
+}
+
+// handleGetChirps returns all chirps sorted by created_at in ascending order
+func (a *apiConfig) handleGetChirps(w http.ResponseWriter, r *http.Request) {
+	chirps, err := a.db.GetAllChirps(r.Context())
+	if err != nil {
+		log.Printf("error fetchign chirps %s", err)
+	}
+
+	chirpResponses := []ChirpResponse{}
+	for _, chirp := range chirps {
+		chirpResponses = append(chirpResponses, ChirpResponse{
+			Id:         chirp.ID,
+			Body:       chirp.Body,
+			Created_At: chirp.CreatedAt,
+			Updated_At: chirp.UpdatedAt,
+			UserID:     chirp.UserID,
+		})
+	}
+
+	sort.Slice(chirpResponses, func(i, j int) bool {
+		return chirpResponses[i].Created_At.Before(chirpResponses[j].Created_At)
+	})
+
+	sendJSONResponse(w, 200, chirpResponses)
+}
+
+// TODO: test this out more... not sure if works
+func (a *apiConfig) handleGetChirpsById(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+
+	var chirpRep ChirpResponse
+	if id == "" {
+		sendJSONResponse(w, 404, chirpRep)
+		return
+	}
+
+	chirps, err := a.db.GetAllChirps(r.Context())
+	if err != nil {
+		log.Printf("error fetching chirps %s", err)
+	}
+
+	for _, chirp := range chirps {
+		if chirp.ID.String() == id {
+			chirpRep.Id = chirp.ID
+			chirpRep.Body = chirp.Body
+			chirpRep.Created_At = chirp.CreatedAt
+			chirpRep.Updated_At = chirp.UpdatedAt
+			chirp.UserID = chirp.UserID
+		}
+	}
+
+	sendJSONResponse(w, 200, chirpRep)
 }
 
 // handleCreateUser creates a new user in the database

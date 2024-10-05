@@ -21,8 +21,3 @@ func TestCleanBadWords(t *testing.T) {
 		}
 	}
 }
-
-func TestAPI(t *testing.T) {
-	apiCfg := apiCfg{}
-
-}
