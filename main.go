@@ -145,13 +145,14 @@ func (a *apiConfig) handleGetChirps(w http.ResponseWriter, r *http.Request) {
 	sendJSONResponse(w, 200, chirpResponses)
 }
 
-// TODO: test this out more... not sure if works
+// handleGetChirpsById returns a single chirp passed in by id
 func (a *apiConfig) handleGetChirpsById(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
+	chirpId := r.PathValue("chirpID")
 
-	var chirpRep ChirpResponse
-	if id == "" {
-		sendJSONResponse(w, 404, chirpRep)
+	var chirpResp ChirpResponse
+	if chirpId == "" {
+		chirpResp.Error = fmt.Sprintf("unable to find chirp id of %s please try again", chirpId)
+		sendJSONResponse(w, 404, chirpResp)
 		return
 	}
 
@@ -161,16 +162,16 @@ func (a *apiConfig) handleGetChirpsById(w http.ResponseWriter, r *http.Request) 
 	}
 
 	for _, chirp := range chirps {
-		if chirp.ID.String() == id {
-			chirpRep.Id = chirp.ID
-			chirpRep.Body = chirp.Body
-			chirpRep.Created_At = chirp.CreatedAt
-			chirpRep.Updated_At = chirp.UpdatedAt
-			chirp.UserID = chirp.UserID
+		if chirp.ID.String() == chirpId {
+			chirpResp.Id = chirp.ID
+			chirpResp.Body = chirp.Body
+			chirpResp.Created_At = chirp.CreatedAt
+			chirpResp.Updated_At = chirp.UpdatedAt
+			chirpResp.UserID = chirp.UserID
 		}
 	}
 
-	sendJSONResponse(w, 200, chirpRep)
+	sendJSONResponse(w, 200, chirpResp)
 }
 
 // handleCreateUser creates a new user in the database
