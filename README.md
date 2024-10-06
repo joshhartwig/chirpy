@@ -62,8 +62,8 @@ if err != nil {
 ### Workflow
 
 1. Add the new `.sql` file in the `schema` directory.
-2. Run command from db/schema directory `goose postgres "postgres://joshuahartwig:@localhost:5432/chirpy" up` to apply the migration.
-3. Run `sqlc` from root of project to generate the Go code.
+2. Run command from db/schema directory `goose -dir sql/schema postgres "postgres://joshuahartwig:@localhost:5432/chirpy" up` to apply the migration.
+3. Run `sqlc generate` from root of project to generate the Go code.
 
 should have this dir structure
 ```yaml

@@ -15,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
+	"github.com/joshhartwig/chirpy/internal/auth"
 	"github.com/joshhartwig/chirpy/internal/database"
 
 	_ "github.com/lib/pq"
@@ -177,7 +178,8 @@ func (a *apiConfig) handleGetChirpsById(w http.ResponseWriter, r *http.Request) 
 // handleCreateUser creates a new user in the database
 func (a *apiConfig) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	type req struct {
-		Email string `json:"email"`
+		Email    string `json:"email"`
+		Password string `json:"password"`
 	}
 
 	var userReq req
@@ -185,7 +187,17 @@ func (a *apiConfig) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Error decoding request: %s", err)
 	}
 
-	user, err := a.db.CreateUser(r.Context(), userReq.Email)
+	hashedPassword, err := auth.HashPassword(userReq.Password)
+	if err != nil {
+		log.Printf("Error hashing password")
+		return
+	}
+
+	userReq.Password = hashedPassword
+	user, err := a.db.CreateUser(r.Context(), database.CreateUserParams{
+		Email:          userReq.Email,
+		HashedPassword: userReq.Password,
+	})
 	if err != nil {
 		log.Printf("error creating user in database %s", err)
 	}
@@ -198,6 +210,14 @@ func (a *apiConfig) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sendJSONResponse(w, http.StatusCreated, dbUser)
+}
+
+func (a *apiConfig) handleLogin(w http.ResponseWriter, r *http.Request) {
+	type req struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+	//TODO: finish this req
 }
 
 // handleReportHealth responds with "OK" for health check
