@@ -89,6 +89,7 @@ func main() {
 	mux.HandleFunc("GET /admin/metrics", apiCfg.middlewareMetricsReport)
 	mux.HandleFunc("POST /admin/reset", apiCfg.middlewareMetricsReset)
 
+	mux.HandleFunc("POST /api/login", apiCfg.handleLogin)
 	mux.HandleFunc("POST /api/users", apiCfg.handleCreateUser)
 	mux.HandleFunc("POST /api/chirps", apiCfg.handleCreateChirp)
 	mux.HandleFunc("GET /api/chirps/{chirpID}", apiCfg.handleGetChirpsById)
@@ -212,12 +213,48 @@ func (a *apiConfig) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	sendJSONResponse(w, http.StatusCreated, dbUser)
 }
 
+// TODO: clean this up, the naming is all over the place
 func (a *apiConfig) handleLogin(w http.ResponseWriter, r *http.Request) {
-	type req struct {
+	// struct for login request
+	type loginRequest struct {
 		Email    string `json:"email"`
 		Password string `json:"password"`
 	}
-	//TODO: finish this req
+
+	var user loginRequest
+	if err := json.NewDecoder(r.Body).Decode(&user); err != nil {
+		sendJSONResponse(w, http.StatusBadRequest, map[string]string{"error": "invalid request payload"})
+		return
+	}
+
+	// return all users from the db TODO: fix this with a query
+	users, err := a.db.GetAllUsers(r.Context())
+	if err != nil {
+		sendJSONResponse(w, http.StatusInternalServerError, map[string]string{"error": "error retrieving users from db"})
+		return
+	}
+
+	for _, dbUser := range users {
+		if user.Email == dbUser.Email {
+			if err := auth.CheckPasswordHash(user.Password, dbUser.HashedPassword); err != nil {
+				sendJSONResponse(w, http.StatusUnauthorized, map[string]string{"error": "unathorized bad password"})
+				return
+			}
+			responseUser := User{
+				ID:         dbUser.ID,
+				Created_At: dbUser.CreatedAt,
+				Updated_At: dbUser.UpdatedAt,
+				Email:      dbUser.Email,
+			}
+
+			sendJSONResponse(w, http.StatusOK, responseUser)
+			return
+		}
+	}
+
+	// no user found
+	sendJSONResponse(w, 401, map[string]string{"error": "no user found"})
+
 }
 
 // handleReportHealth responds with "OK" for health check
