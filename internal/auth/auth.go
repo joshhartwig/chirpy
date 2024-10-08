@@ -44,3 +44,36 @@ func MakeJWT(userId uuid.UUID, tokenSecret string, expiresIn time.Duration) (str
 
 	return tokenString, nil
 }
+
+// ValidateJWT validates a JWT token and extracts the user ID from the subject claim.
+func ValidateJWT(tokenString, tokenSecret string) (uuid.UUID, error) {
+	claims := jwt.MapClaims{}
+	token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
+		return []byte(tokenSecret), nil
+	})
+
+	if err != nil {
+		return uuid.Nil, errors.New("unable to validateJWT")
+	}
+
+	var id uuid.UUID
+	for k, v := range claims {
+		if k == "sub" {
+			subject, ok := v.(string)
+			if !ok {
+				return uuid.Nil, errors.New("invalid subject claim")
+			}
+			parsedId, err := uuid.Parse(subject)
+			if err != nil {
+				return uuid.Nil, errors.New("invalid UUID format in subject claim")
+			}
+			id = parsedId
+		}
+	}
+
+	if !token.Valid {
+		return uuid.Nil, errors.New("invalid token")
+	}
+
+	return id, nil
+}

@@ -2,6 +2,9 @@ package auth
 
 import (
 	"testing"
+	"time"
+
+	"github.com/google/uuid"
 )
 
 func TestHashPassword(t *testing.T) {
@@ -36,4 +39,43 @@ func TestCheckPasswordHash(t *testing.T) {
 		t.Fatalf("expecting an error got nothing %v", err)
 	}
 
+}
+
+func TestMakeJWT(t *testing.T) {
+	userId := uuid.New()
+	tokenSecret := "test_secret"
+	expires := time.Hour
+
+	token, err := MakeJWT(userId, tokenSecret, expires)
+	if err != nil {
+		t.Fatalf("MakeJWT() returned an error %v", err)
+	}
+
+	if token == "" {
+		t.Fatalf("MakeJWT() returned an empty string")
+	}
+}
+
+func TestValidateJWT(t *testing.T) {
+	userId := uuid.New()
+	tokenSecret := "test_secret"
+	expires := time.Hour
+
+	token, err := MakeJWT(userId, tokenSecret, expires)
+	if err != nil {
+		t.Fatalf("MakeJWT() returned an error %v", err)
+	}
+
+	if token == "" {
+		t.Fatalf("MakeJWT() returned an empty string")
+	}
+
+	parsedUserId, err := ValidateJWT(token, tokenSecret)
+	if err != nil {
+		t.Fatalf("ValidateJWT() error = %v", err)
+	}
+
+	if parsedUserId != userId {
+		t.Fatalf("ValidateJWT() error user ids not the same")
+	}
 }
