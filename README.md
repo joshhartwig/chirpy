@@ -80,3 +80,6 @@ project-root/
 │   │   ├── (generated Go files)
 ├── sqlc.yaml
 ```
+
+Generate random string `openssl rand -base64 64`
+

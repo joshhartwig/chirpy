@@ -27,6 +27,7 @@ type User struct {
 	Created_At time.Time `json:"created_at"`
 	Updated_At time.Time `json:"updated_at"`
 	Email      string    `json:"email"`
+	Token      string    `json:"token"`
 }
 
 type ChirpRequest struct {
@@ -48,6 +49,7 @@ type apiConfig struct {
 	fileServerHits atomic.Int32
 	db             *database.Queries
 	platform       string
+	jwtSecret      string
 }
 
 /*
@@ -55,8 +57,9 @@ type apiConfig struct {
 */
 
 func main() {
-	godotenv.Load()              // load env vars
-	dbURL := os.Getenv("DB_URL") // fetch the db_url connection string
+	godotenv.Load()                      // load env vars
+	dbURL := os.Getenv("DB_URL")         // fetch the db_url connection string
+	jwtSecret := os.Getenv("JWT_SECRET") // fetch jwt secret
 	platform := os.Getenv("PLATFORM")
 	db, err := sql.Open("postgres", dbURL) // open the db w/ sql.open
 	if err != nil {
@@ -73,6 +76,7 @@ func main() {
 		fileServerHits: atomic.Int32{},
 		db:             dbQueries,
 		platform:       platform,
+		jwtSecret:      jwtSecret,
 	}
 
 	// create a router (aka mux) for our project
@@ -217,8 +221,9 @@ func (a *apiConfig) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 func (a *apiConfig) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// struct for login request
 	type loginRequest struct {
-		Email    string `json:"email"`
-		Password string `json:"password"`
+		Email              string `json:"email"`
+		Password           string `json:"password"`
+		Expires_In_Seconds int    `json:"expires_in_seconds,omitempty"`
 	}
 
 	var user loginRequest
@@ -227,7 +232,12 @@ func (a *apiConfig) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if user.Expires_In_Seconds == 0 || user.Expires_In_Seconds > 3600 {
+		user.Expires_In_Seconds = 3600
+	}
+
 	// return all users from the db TODO: fix this with a query
+	// get all the users then find the user with the id that matches
 	users, err := a.db.GetAllUsers(r.Context())
 	if err != nil {
 		sendJSONResponse(w, http.StatusInternalServerError, map[string]string{"error": "error retrieving users from db"})
@@ -245,7 +255,8 @@ func (a *apiConfig) handleLogin(w http.ResponseWriter, r *http.Request) {
 				Created_At: dbUser.CreatedAt,
 				Updated_At: dbUser.UpdatedAt,
 				Email:      dbUser.Email,
-			}
+				Token:  auth.MakeJWT(dbUser.ID, dbUser.HashedPassword, )
+						}
 
 			sendJSONResponse(w, http.StatusOK, responseUser)
 			return

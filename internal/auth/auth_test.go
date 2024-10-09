@@ -1,6 +1,8 @@
 package auth
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -56,12 +58,17 @@ func TestMakeJWT(t *testing.T) {
 	}
 }
 
+/*
+TODO: Add some more unit tests to the auth package. Make sure that you can create and validate JWTs, and that expired tokens are rejected and JWTs signed with the wrong secret are rejected.
+*/
+
 func TestValidateJWT(t *testing.T) {
 	userId := uuid.New()
-	tokenSecret := "test_secret"
+	correctTokenSecret := "test_secret"
+	incorrectTokenSecret := "incorrect"
 	expires := time.Hour
 
-	token, err := MakeJWT(userId, tokenSecret, expires)
+	token, err := MakeJWT(userId, correctTokenSecret, expires)
 	if err != nil {
 		t.Fatalf("MakeJWT() returned an error %v", err)
 	}
@@ -70,12 +77,73 @@ func TestValidateJWT(t *testing.T) {
 		t.Fatalf("MakeJWT() returned an empty string")
 	}
 
-	parsedUserId, err := ValidateJWT(token, tokenSecret)
+	parsedUserId, err := ValidateJWT(token, correctTokenSecret)
 	if err != nil {
 		t.Fatalf("ValidateJWT() error = %v", err)
 	}
 
+	// check validateJWT to see if it errors on incorrect token secret
+	_, err = ValidateJWT(token, incorrectTokenSecret)
+	if err == nil {
+		t.Fatalf("ValidateJWT should have returned error")
+	}
+
 	if parsedUserId != userId {
 		t.Fatalf("ValidateJWT() error user ids not the same")
+	}
+}
+
+func TestGetBearerToken(t *testing.T) {
+	tests := []struct {
+		name          string
+		authHeader    string
+		expectedToken string
+		expectError   bool
+	}{
+		{
+			name:          "Valid Bearer Token",
+			authHeader:    "Bearer valid_token",
+			expectedToken: "valid_token",
+			expectError:   false,
+		},
+		{
+			name:          "Missing Authorization Header",
+			authHeader:    "",
+			expectedToken: "",
+			expectError:   true,
+		},
+		{
+			name:          "Invalid Authorization Header Format",
+			authHeader:    "InvalidHeaderFormat",
+			expectedToken: "",
+			expectError:   true,
+		},
+		{
+			name:          "Invalid Bearer Token Format",
+			authHeader:    "Bearer",
+			expectedToken: "",
+			expectError:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			req.Header.Set("Authorization", tt.authHeader)
+
+			token, err := GetBearerToken(req.Header)
+			if tt.expectError {
+				if err == nil {
+					t.Fatalf("expected error but got none")
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("expected no error but got %v", err)
+				}
+				if token != tt.expectedToken {
+					t.Fatalf("expected token %v got %v", tt.expectedToken, err)
+				}
+			}
+		})
 	}
 }
