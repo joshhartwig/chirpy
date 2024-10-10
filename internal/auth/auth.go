@@ -2,6 +2,7 @@ package auth
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -93,6 +94,8 @@ func GetBearerToken(headers http.Header) (string, error) {
 	}
 
 	token = strings.TrimSpace(token)
+	//TODO: remove me debugging
+	fmt.Printf("Found Bearer Token: %s\n", token)
 	if token == "" {
 		return "", errors.New("no data in token")
 	}

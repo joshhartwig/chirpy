@@ -31,8 +31,7 @@ type User struct {
 }
 
 type ChirpRequest struct {
-	Body    string    `json:"body"`
-	User_Id uuid.UUID `json:"user_id"`
+	Body string `json:"body"`
 }
 
 type ChirpResponse struct {
@@ -238,6 +237,8 @@ func (a *apiConfig) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	// return all users from the db TODO: fix this with a query
 	// get all the users then find the user with the id that matches
+	// TODO: 10/9 fix this, passing in correct token is not working
+	// TODO: validate JWT is not returning the correct userid for some reason
 	users, err := a.db.GetAllUsers(r.Context())
 	if err != nil {
 		sendJSONResponse(w, http.StatusInternalServerError, map[string]string{"error": "error retrieving users from db"})
@@ -250,13 +251,19 @@ func (a *apiConfig) handleLogin(w http.ResponseWriter, r *http.Request) {
 				sendJSONResponse(w, http.StatusUnauthorized, map[string]string{"error": "unathorized bad password"})
 				return
 			}
+
+			token, err := auth.MakeJWT(dbUser.ID, a.jwtSecret, time.Duration(user.Expires_In_Seconds))
+			if err != nil {
+				sendJSONResponse(w, http.StatusInternalServerError, map[string]string{"error": "error generating token"})
+			}
+
 			responseUser := User{
 				ID:         dbUser.ID,
 				Created_At: dbUser.CreatedAt,
 				Updated_At: dbUser.UpdatedAt,
 				Email:      dbUser.Email,
-				Token:  auth.MakeJWT(dbUser.ID, dbUser.HashedPassword, )
-						}
+				Token:      token,
+			}
 
 			sendJSONResponse(w, http.StatusOK, responseUser)
 			return
@@ -283,6 +290,19 @@ func (a *apiConfig) handleCreateChirp(w http.ResponseWriter, r *http.Request) {
 		"fornax",
 	}
 
+	// look up token
+	token, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		log.Printf("Error reading token unauthorized")
+		sendJSONResponse(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+	}
+
+	// fetch uuid from token
+	userUUID, err := auth.ValidateJWT(token, a.jwtSecret)
+	if err != nil {
+		sendJSONResponse(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+	}
+
 	var chirpReq ChirpRequest
 	if err := json.NewDecoder(r.Body).Decode(&chirpReq); err != nil {
 		log.Printf("Error decoding request: %s", err)
@@ -303,11 +323,11 @@ func (a *apiConfig) handleCreateChirp(w http.ResponseWriter, r *http.Request) {
 
 	// clean the badwords
 	chirpReq.Body = cleanBadWords(chirpReq.Body, badWords)
-
+	fmt.Println("about to write to db for: ", userUUID.String())
 	// write to database
 	chirp, err := a.db.CreateChirp(r.Context(), database.CreateChirpParams{
 		Body:   chirpReq.Body,
-		UserID: chirpReq.User_Id,
+		UserID: userUUID,
 	})
 	if err != nil {
 		log.Printf("error creating chirp in database %s", err)
@@ -355,6 +375,7 @@ func (a *apiConfig) middlewareMetricsReset(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	a.db.DeleteAllUsers(r.Context())
+	a.db.DeleteAllChirps(r.Context())
 	w.WriteHeader(http.StatusOK)
 	a.fileServerHits.Store(0)
 }
