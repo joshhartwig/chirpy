@@ -48,36 +48,40 @@ func MakeJWT(userId uuid.UUID, tokenSecret string, expiresIn time.Duration) (str
 	return tokenString, nil
 }
 
+// CustomClaims represents the custom JWT claims
+type CustomClaims struct {
+	Sub string `json:"sub"`
+	jwt.RegisteredClaims
+}
+
 // ValidateJWT validates a JWT token and extracts the user ID from the subject claim.
 func ValidateJWT(tokenString, tokenSecret string) (uuid.UUID, error) {
-	claims := jwt.MapClaims{}
+	claims := &CustomClaims{}
+	fmt.Println("ValidateJWT() tokenstring:tokensecret", tokenString, tokenSecret)
 	token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		}
 		return []byte(tokenSecret), nil
 	})
 
 	if err != nil {
-		return uuid.Nil, errors.New("unable to validateJWT")
-	}
-
-	var id uuid.UUID
-	for k, v := range claims {
-		if k == "sub" {
-			subject, ok := v.(string)
-			if !ok {
-				return uuid.Nil, errors.New("invalid subject claim")
-			}
-			parsedId, err := uuid.Parse(subject)
-			if err != nil {
-				return uuid.Nil, errors.New("invalid UUID format in subject claim")
-			}
-			id = parsedId
-		}
+		return uuid.Nil, fmt.Errorf("unable to parse token: %w", err)
 	}
 
 	if !token.Valid {
 		return uuid.Nil, errors.New("invalid token")
 	}
 
+	subject := claims.Sub
+	if subject == "" {
+		return uuid.Nil, errors.New("subject nil in claims field")
+	}
+
+	id, err := uuid.Parse(subject)
+	if err != nil {
+		return uuid.Nil, errors.New("error parsing subject")
+	}
 	return id, nil
 }
 
@@ -94,8 +98,6 @@ func GetBearerToken(headers http.Header) (string, error) {
 	}
 
 	token = strings.TrimSpace(token)
-	//TODO: remove me debugging
-	fmt.Printf("Found Bearer Token: %s\n", token)
 	if token == "" {
 		return "", errors.New("no data in token")
 	}

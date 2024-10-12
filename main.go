@@ -235,10 +235,6 @@ func (a *apiConfig) handleLogin(w http.ResponseWriter, r *http.Request) {
 		user.Expires_In_Seconds = 3600
 	}
 
-	// return all users from the db TODO: fix this with a query
-	// get all the users then find the user with the id that matches
-	// TODO: 10/9 fix this, passing in correct token is not working
-	// TODO: validate JWT is not returning the correct userid for some reason
 	users, err := a.db.GetAllUsers(r.Context())
 	if err != nil {
 		sendJSONResponse(w, http.StatusInternalServerError, map[string]string{"error": "error retrieving users from db"})
@@ -252,7 +248,8 @@ func (a *apiConfig) handleLogin(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
-			token, err := auth.MakeJWT(dbUser.ID, a.jwtSecret, time.Duration(user.Expires_In_Seconds))
+			token, err := auth.MakeJWT(dbUser.ID, a.jwtSecret, time.Duration(user.Expires_In_Seconds)*time.Second)
+			fmt.Println("created token / using secret", token, a.jwtSecret)
 			if err != nil {
 				sendJSONResponse(w, http.StatusInternalServerError, map[string]string{"error": "error generating token"})
 			}
@@ -298,9 +295,13 @@ func (a *apiConfig) handleCreateChirp(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// fetch uuid from token
+	fmt.Println("running validate jwt with:", token)
+	fmt.Println("secret on server:", a.jwtSecret)
 	userUUID, err := auth.ValidateJWT(token, a.jwtSecret)
 	if err != nil {
+		fmt.Println("error parsing with auth.ValidateJWT()", err)
 		sendJSONResponse(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
 	}
 
 	var chirpReq ChirpRequest

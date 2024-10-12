@@ -58,10 +58,6 @@ func TestMakeJWT(t *testing.T) {
 	}
 }
 
-/*
-TODO: Add some more unit tests to the auth package. Make sure that you can create and validate JWTs, and that expired tokens are rejected and JWTs signed with the wrong secret are rejected.
-*/
-
 func TestValidateJWT(t *testing.T) {
 	userId := uuid.New()
 	correctTokenSecret := "test_secret"
@@ -91,6 +87,7 @@ func TestValidateJWT(t *testing.T) {
 	if parsedUserId != userId {
 		t.Fatalf("ValidateJWT() error user ids not the same")
 	}
+
 }
 
 func TestGetBearerToken(t *testing.T) {
