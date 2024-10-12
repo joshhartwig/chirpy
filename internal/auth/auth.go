@@ -1,6 +1,8 @@
 package auth
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
@@ -11,6 +13,12 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 )
+
+// CustomClaims represents the custom JWT claims
+type CustomClaims struct {
+	Sub string `json:"sub"`
+	jwt.RegisteredClaims
+}
 
 // HashPassword hashes a plain text password using bcrypt.
 func HashPassword(password string) (string, error) {
@@ -46,12 +54,6 @@ func MakeJWT(userId uuid.UUID, tokenSecret string, expiresIn time.Duration) (str
 	}
 
 	return tokenString, nil
-}
-
-// CustomClaims represents the custom JWT claims
-type CustomClaims struct {
-	Sub string `json:"sub"`
-	jwt.RegisteredClaims
 }
 
 // ValidateJWT validates a JWT token and extracts the user ID from the subject claim.
@@ -101,5 +103,19 @@ func GetBearerToken(headers http.Header) (string, error) {
 	if token == "" {
 		return "", errors.New("no data in token")
 	}
+	return token, nil
+}
+
+// MakeRefreshToken generates a secure random refresh token encoded as a hex string.
+// It returns the token and an error if the token generation fails.
+func MakeRefreshToken() (string, error) {
+	tokenBytes := make([]byte, 32)  // create a byte slice
+	_, err := rand.Read(tokenBytes) // fill it with random bytes
+
+	if err != nil {
+		return "", errors.New("error creating random token")
+	}
+
+	token := hex.EncodeToString(tokenBytes) // encode it to hex string
 	return token, nil
 }
