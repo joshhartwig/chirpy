@@ -7,6 +7,7 @@ package database
 
 import (
 	"context"
+	"database/sql"
 	"time"
 
 	"github.com/google/uuid"
@@ -21,26 +22,20 @@ VALUES
     NOW(),
     NOW(),
     $2,
-    $3,
-    $4
+    NOW + INTERVAL
+'60 day',
+    null
   )
 RETURNING token, created_at, updated_at, expires_at, revoked_at, user_id
 `
 
 type CreateTokenParams struct {
-	Token     string
-	UserID    uuid.UUID
-	ExpiresAt time.Time
-	RevokedAt time.Time
+	Token  string
+	UserID uuid.UUID
 }
 
 func (q *Queries) CreateToken(ctx context.Context, arg CreateTokenParams) (RefreshToken, error) {
-	row := q.db.QueryRowContext(ctx, createToken,
-		arg.Token,
-		arg.UserID,
-		arg.ExpiresAt,
-		arg.RevokedAt,
-	)
+	row := q.db.QueryRowContext(ctx, createToken, arg.Token, arg.UserID)
 	var i RefreshToken
 	err := row.Scan(
 		&i.Token,
@@ -96,4 +91,48 @@ func (q *Queries) GetAllTokens(ctx context.Context) ([]RefreshToken, error) {
 		return nil, err
 	}
 	return items, nil
+}
+
+const getTokenDetails = `-- name: GetTokenDetails :one
+SELECT token, user_id, created_at, updated_at, expires_at, revoked_at
+FROM refresh_tokens
+WHERE token = $1
+  AND revoked_at IS null
+  AND expires_at > NOW()
+`
+
+type GetTokenDetailsRow struct {
+	Token     string
+	UserID    uuid.UUID
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	ExpiresAt time.Time
+	RevokedAt sql.NullTime
+}
+
+func (q *Queries) GetTokenDetails(ctx context.Context, token string) (GetTokenDetailsRow, error) {
+	row := q.db.QueryRowContext(ctx, getTokenDetails, token)
+	var i GetTokenDetailsRow
+	err := row.Scan(
+		&i.Token,
+		&i.UserID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ExpiresAt,
+		&i.RevokedAt,
+	)
+	return i, err
+}
+
+const getUserIDByToken = `-- name: GetUserIDByToken :one
+SELECT user_id
+FROM refresh_tokens
+WHERE token = $1
+`
+
+func (q *Queries) GetUserIDByToken(ctx context.Context, token string) (uuid.UUID, error) {
+	row := q.db.QueryRowContext(ctx, getUserIDByToken, token)
+	var user_id uuid.UUID
+	err := row.Scan(&user_id)
+	return user_id, err
 }

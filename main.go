@@ -21,13 +21,16 @@ import (
 	_ "github.com/lib/pq"
 )
 
+const jwtTokenExiration int = 3600
+
 // our user account struct
 type User struct {
-	ID         uuid.UUID `json:"id"`
-	Created_At time.Time `json:"created_at"`
-	Updated_At time.Time `json:"updated_at"`
-	Email      string    `json:"email"`
-	Token      string    `json:"token"`
+	ID            uuid.UUID `json:"id"`
+	Created_At    time.Time `json:"created_at"`
+	Updated_At    time.Time `json:"updated_at"`
+	Email         string    `json:"email"`
+	Token         string    `json:"token"`
+	Refresh_Token string    `json:"refresh_token"`
 }
 
 type ChirpRequest struct {
@@ -94,6 +97,7 @@ func main() {
 
 	mux.HandleFunc("POST /api/login", apiCfg.handleLogin)
 	mux.HandleFunc("POST /api/users", apiCfg.handleCreateUser)
+	mux.HandleFunc("POST /api/refresh", apiCfg.handleTokenRefresh)
 	mux.HandleFunc("POST /api/chirps", apiCfg.handleCreateChirp)
 	mux.HandleFunc("GET /api/chirps/{chirpID}", apiCfg.handleGetChirpsById)
 	mux.HandleFunc("GET /api/healthz", apiCfg.handleReportHealth)
@@ -216,23 +220,55 @@ func (a *apiConfig) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	sendJSONResponse(w, http.StatusCreated, dbUser)
 }
 
+// used to refresh our refresh token
+func (a *apiConfig) handleTokenRefresh(w http.ResponseWriter, r *http.Request) {
+	// gets a refresh token from the header and find the user associated with the refresh token
+	authToken, err := auth.GetBearerToken(w.Header())
+	if err != nil {
+		sendJSONResponse(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+
+	fmt.Println("refresh token: ", authToken)
+	// the sql query will only return a token if revoked = null and expired > now
+	tokenDetails, err := a.db.GetTokenDetails(r.Context(), authToken)
+	if err != nil {
+		sendJSONResponse(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+
+	// create a new jwt
+	returnToken, err := auth.MakeJWT(tokenDetails.UserID, a.jwtSecret, time.Duration(jwtTokenExiration))
+	if err != nil {
+		sendJSONResponse(w, http.StatusInternalServerError, map[string]string{"error": "error creating new jwt"})
+	}
+
+	// return our jwt
+	sendJSONResponse(w, 201, map[string]string{"token": returnToken})
+
+}
+
+// CheckValidityRefreshToken checks if the given refresh token is valid by
+// verifying that it has not expired and has not been revoked.
+func CheckValidityRefreshToken(tokenObj *database.RefreshToken) bool {
+	notExpired := time.Now().Before(tokenObj.ExpiresAt)
+	notRevoked := !tokenObj.RevokedAt.Valid
+
+	return notExpired && notRevoked
+}
+
 // TODO: clean this up, the naming is all over the place
 func (a *apiConfig) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// struct for login request
 	type loginRequest struct {
-		Email              string `json:"email"`
-		Password           string `json:"password"`
-		Expires_In_Seconds int    `json:"expires_in_seconds,omitempty"`
+		Email    string `json:"email"`
+		Password string `json:"password"`
 	}
 
 	var user loginRequest
 	if err := json.NewDecoder(r.Body).Decode(&user); err != nil {
 		sendJSONResponse(w, http.StatusBadRequest, map[string]string{"error": "invalid request payload"})
 		return
-	}
-
-	if user.Expires_In_Seconds == 0 || user.Expires_In_Seconds > 3600 {
-		user.Expires_In_Seconds = 3600
 	}
 
 	users, err := a.db.GetAllUsers(r.Context())
@@ -248,18 +284,32 @@ func (a *apiConfig) handleLogin(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
-			token, err := auth.MakeJWT(dbUser.ID, a.jwtSecret, time.Duration(user.Expires_In_Seconds)*time.Second)
-			fmt.Println("created token / using secret", token, a.jwtSecret)
+			// create jwt token with 1 hour refresh
+			jwtToken, err := auth.MakeJWT(dbUser.ID, a.jwtSecret, time.Duration(jwtTokenExiration)*time.Second)
 			if err != nil {
 				sendJSONResponse(w, http.StatusInternalServerError, map[string]string{"error": "error generating token"})
 			}
 
+			// create refresh token with 1 hour refresh
+			refreshToken, err := auth.MakeRefreshToken()
+			if err != nil {
+				sendJSONResponse(w, http.StatusInternalServerError, map[string]string{"error": "error generating refresh token"})
+			}
+
+			// write the refresh token in the database
+			a.db.CreateToken(r.Context(), database.CreateTokenParams{
+				Token:  refreshToken,
+				UserID: dbUser.ID,
+			})
+
+			// create the response and send it back in json form
 			responseUser := User{
-				ID:         dbUser.ID,
-				Created_At: dbUser.CreatedAt,
-				Updated_At: dbUser.UpdatedAt,
-				Email:      dbUser.Email,
-				Token:      token,
+				ID:            dbUser.ID,
+				Created_At:    dbUser.CreatedAt,
+				Updated_At:    dbUser.UpdatedAt,
+				Email:         dbUser.Email,
+				Token:         jwtToken,
+				Refresh_Token: refreshToken,
 			}
 
 			sendJSONResponse(w, http.StatusOK, responseUser)

@@ -7,8 +7,9 @@ VALUES
     NOW(),
     NOW(),
     $2,
-    $3,
-    $4
+    NOW + INTERVAL
+'60 day',
+    null
   )
 RETURNING *;
 
@@ -19,3 +20,17 @@ RETURNING *;
 -- name: GetAllTokens :many
 SELECT *
 FROM refresh_tokens;
+
+-- name: GetUserIDByToken :one
+SELECT user_id
+FROM refresh_tokens
+WHERE token = $1;
+
+-- name: GetTokenDetails :one
+SELECT token, user_id, created_at, updated_at, expires_at, revoked_at
+FROM refresh_tokens
+WHERE token = $1
+  AND revoked_at IS null
+  AND expires_at > NOW();
+
+
