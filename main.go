@@ -220,6 +220,25 @@ func (a *apiConfig) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	sendJSONResponse(w, http.StatusCreated, dbUser)
 }
 
+func (a *apiConfig) handleTokenRevoke(w http.ResponseWriter, r *http.Request) {
+	// fetch bearer token from header
+	authToken, err := auth.GetBearerToken(w.Header())
+	if err != nil {
+		sendJSONResponse(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+
+	// find the token that matches our token in the database
+	dbToken, err := a.db.GetTokenDetails(r.Context(), authToken)
+	if err != nil {
+		sendJSONResponse(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+
+	dbToken.RevokedAt = sql.NullTime{Time: time.Now(), Valid: true}
+
+}
+
 // used to refresh our refresh token
 func (a *apiConfig) handleTokenRefresh(w http.ResponseWriter, r *http.Request) {
 	// gets a refresh token from the header and find the user associated with the refresh token

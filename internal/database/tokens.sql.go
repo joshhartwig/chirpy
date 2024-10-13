@@ -136,3 +136,16 @@ func (q *Queries) GetUserIDByToken(ctx context.Context, token string) (uuid.UUID
 	err := row.Scan(&user_id)
 	return user_id, err
 }
+
+const revokeToken = `-- name: RevokeToken :exec
+UPDATE refresh_tokens
+SET revoked_at = NOW(),
+updated_at = NOW()
+WHERE token = $1
+RETURNING token, created_at, updated_at, expires_at, revoked_at, user_id
+`
+
+func (q *Queries) RevokeToken(ctx context.Context, token string) error {
+	_, err := q.db.ExecContext(ctx, revokeToken, token)
+	return err
+}
