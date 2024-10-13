@@ -223,9 +223,9 @@ func (a *apiConfig) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 
 func (a *apiConfig) handleTokenRevoke(w http.ResponseWriter, r *http.Request) {
 	// fetch bearer token from header
-	authToken, err := auth.GetBearerToken(w.Header())
+	authToken, err := auth.GetBearerToken(r.Header)
 	if err != nil {
-		sendJSONResponse(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		sendJSONResponse(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized unable to find bearer token"})
 		return
 	}
 
@@ -244,9 +244,10 @@ func (a *apiConfig) handleTokenRevoke(w http.ResponseWriter, r *http.Request) {
 // used to refresh our refresh token
 func (a *apiConfig) handleTokenRefresh(w http.ResponseWriter, r *http.Request) {
 	// gets a refresh token from the header and find the user associated with the refresh token
-	authToken, err := auth.GetBearerToken(w.Header())
+	authToken, err := auth.GetBearerToken(r.Header)
 	if err != nil {
-		sendJSONResponse(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		fmt.Println("error getting bearer token", err)
+		sendJSONResponse(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized invalid getbearertoken"})
 		return
 	}
 
@@ -254,7 +255,7 @@ func (a *apiConfig) handleTokenRefresh(w http.ResponseWriter, r *http.Request) {
 	// the sql query will only return a token if revoked = null and expired > now
 	tokenDetails, err := a.db.GetTokenDetails(r.Context(), authToken)
 	if err != nil {
-		sendJSONResponse(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		sendJSONResponse(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized gettokendetails"})
 		return
 	}
 
