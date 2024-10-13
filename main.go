@@ -98,6 +98,7 @@ func main() {
 	mux.HandleFunc("POST /api/login", apiCfg.handleLogin)
 	mux.HandleFunc("POST /api/users", apiCfg.handleCreateUser)
 	mux.HandleFunc("POST /api/refresh", apiCfg.handleTokenRefresh)
+	mux.HandleFunc("POST /api/revoke", apiCfg.handleTokenRevoke)
 	mux.HandleFunc("POST /api/chirps", apiCfg.handleCreateChirp)
 	mux.HandleFunc("GET /api/chirps/{chirpID}", apiCfg.handleGetChirpsById)
 	mux.HandleFunc("GET /api/healthz", apiCfg.handleReportHealth)
@@ -235,7 +236,8 @@ func (a *apiConfig) handleTokenRevoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	dbToken.RevokedAt = sql.NullTime{Time: time.Now(), Valid: true}
+	// update our database to revoke our token by setting the data to now and updated date to now
+	a.db.RevokeToken(r.Context(), dbToken.Token)
 
 }
 
@@ -446,6 +448,7 @@ func (a *apiConfig) middlewareMetricsReset(w http.ResponseWriter, r *http.Reques
 	}
 	a.db.DeleteAllUsers(r.Context())
 	a.db.DeleteAllChirps(r.Context())
+	a.db.DeleteAllTokens(r.Context())
 	w.WriteHeader(http.StatusOK)
 	a.fileServerHits.Store(0)
 }
