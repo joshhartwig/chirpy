@@ -238,7 +238,7 @@ func (a *apiConfig) handleTokenRevoke(w http.ResponseWriter, r *http.Request) {
 
 	// update our database to revoke our token by setting the data to now and updated date to now
 	a.db.RevokeToken(r.Context(), dbToken.Token)
-
+	sendJSONResponse(w, http.StatusNoContent, map[string]string{"success": "revoked"})
 }
 
 // used to refresh our refresh token
@@ -265,7 +265,7 @@ func (a *apiConfig) handleTokenRefresh(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// return our jwt
-	sendJSONResponse(w, 201, map[string]string{"token": returnToken})
+	sendJSONResponse(w, http.StatusOK, map[string]string{"token": returnToken})
 
 }
 
@@ -286,18 +286,21 @@ func (a *apiConfig) handleLogin(w http.ResponseWriter, r *http.Request) {
 		Password string `json:"password"`
 	}
 
+	// decode the json into the loginRequest struct
 	var user loginRequest
 	if err := json.NewDecoder(r.Body).Decode(&user); err != nil {
 		sendJSONResponse(w, http.StatusBadRequest, map[string]string{"error": "invalid request payload"})
 		return
 	}
 
+	// fetch all our users from the db TODO: fix this to fetch one user
 	users, err := a.db.GetAllUsers(r.Context())
 	if err != nil {
 		sendJSONResponse(w, http.StatusInternalServerError, map[string]string{"error": "error retrieving users from db"})
 		return
 	}
 
+	// find our user by email then check passwordHash
 	for _, dbUser := range users {
 		if user.Email == dbUser.Email {
 			if err := auth.CheckPasswordHash(user.Password, dbUser.HashedPassword); err != nil {
@@ -309,19 +312,26 @@ func (a *apiConfig) handleLogin(w http.ResponseWriter, r *http.Request) {
 			jwtToken, err := auth.MakeJWT(dbUser.ID, a.jwtSecret, time.Duration(jwtTokenExiration)*time.Second)
 			if err != nil {
 				sendJSONResponse(w, http.StatusInternalServerError, map[string]string{"error": "error generating token"})
+				return
 			}
 
 			// create refresh token with 1 hour refresh
 			refreshToken, err := auth.MakeRefreshToken()
 			if err != nil {
 				sendJSONResponse(w, http.StatusInternalServerError, map[string]string{"error": "error generating refresh token"})
+				return
 			}
 
 			// write the refresh token in the database
-			a.db.CreateToken(r.Context(), database.CreateTokenParams{
+			dbToken, err := a.db.CreateToken(r.Context(), database.CreateTokenParams{
 				Token:  refreshToken,
 				UserID: dbUser.ID,
 			})
+
+			if err != nil {
+				sendJSONResponse(w, http.StatusInternalServerError, map[string]string{"error": "error creating dbtoken"})
+				return
+			}
 
 			// create the response and send it back in json form
 			responseUser := User{
@@ -330,7 +340,7 @@ func (a *apiConfig) handleLogin(w http.ResponseWriter, r *http.Request) {
 				Updated_At:    dbUser.UpdatedAt,
 				Email:         dbUser.Email,
 				Token:         jwtToken,
-				Refresh_Token: refreshToken,
+				Refresh_Token: dbToken.Token,
 			}
 
 			sendJSONResponse(w, http.StatusOK, responseUser)
