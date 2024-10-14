@@ -17,6 +17,7 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/joshhartwig/chirpy/internal/auth"
 	"github.com/joshhartwig/chirpy/internal/database"
+	"github.com/joshhartwig/chirpy/internal/logger"
 
 	_ "github.com/lib/pq"
 )
@@ -104,7 +105,7 @@ func main() {
 	mux.HandleFunc("GET /api/healthz", apiCfg.handleReportHealth)
 	mux.HandleFunc("GET /api/chirps", apiCfg.handleGetChirps)
 
-	log.Printf("serving files from %s on port: %s\n", filePathRoot, port)
+	logger.InfoLogger.Printf("serving files from %s on port: %s\n", filePathRoot, port)
 	log.Fatal(srv.ListenAndServe())
 }
 
@@ -134,7 +135,7 @@ func sendJSONResponse(w http.ResponseWriter, statusCode int, data interface{}) {
 func (a *apiConfig) handleGetChirps(w http.ResponseWriter, r *http.Request) {
 	chirps, err := a.db.GetAllChirps(r.Context())
 	if err != nil {
-		log.Printf("error fetchign chirps %s", err)
+		logger.ErrorLogger.Printf("error fetching chirps %s", err)
 	}
 
 	chirpResponses := []ChirpResponse{}
@@ -162,13 +163,14 @@ func (a *apiConfig) handleGetChirpsById(w http.ResponseWriter, r *http.Request) 
 	var chirpResp ChirpResponse
 	if chirpId == "" {
 		chirpResp.Error = fmt.Sprintf("unable to find chirp id of %s please try again", chirpId)
+		logger.ErrorLogger.Printf("unabled to find chirpid of %s please try again", chirpId)
 		sendJSONResponse(w, 404, chirpResp)
 		return
 	}
 
 	chirps, err := a.db.GetAllChirps(r.Context())
 	if err != nil {
-		log.Printf("error fetching chirps %s", err)
+		logger.ErrorLogger.Printf("error fetching chirps %s \n", err)
 	}
 
 	for _, chirp := range chirps {
@@ -193,12 +195,12 @@ func (a *apiConfig) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 
 	var userReq req
 	if err := json.NewDecoder(r.Body).Decode(&userReq); err != nil {
-		log.Printf("Error decoding request: %s", err)
+		logger.ErrorLogger.Printf("error decoding request %s \n", err)
 	}
 
 	hashedPassword, err := auth.HashPassword(userReq.Password)
 	if err != nil {
-		log.Printf("Error hashing password")
+		logger.ErrorLogger.Printf("error hashing password %s \n", err)
 		return
 	}
 
@@ -208,7 +210,7 @@ func (a *apiConfig) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		HashedPassword: userReq.Password,
 	})
 	if err != nil {
-		log.Printf("error creating user in database %s", err)
+		logger.ErrorLogger.Printf("error creating user in database %s \n", err)
 	}
 
 	dbUser := User{
@@ -221,10 +223,12 @@ func (a *apiConfig) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	sendJSONResponse(w, http.StatusCreated, dbUser)
 }
 
+// fetches bearer token from headers, matches it in db and revokes the refresh token in database
 func (a *apiConfig) handleTokenRevoke(w http.ResponseWriter, r *http.Request) {
 	// fetch bearer token from header
 	authToken, err := auth.GetBearerToken(r.Header)
 	if err != nil {
+		logger.ErrorLogger.Printf("error getting bearer token %s \n", err)
 		sendJSONResponse(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized unable to find bearer token"})
 		return
 	}
@@ -232,6 +236,7 @@ func (a *apiConfig) handleTokenRevoke(w http.ResponseWriter, r *http.Request) {
 	// find the token that matches our token in the database
 	dbToken, err := a.db.GetTokenDetails(r.Context(), authToken)
 	if err != nil {
+		logger.ErrorLogger.Printf("error getting token details from database %s \n", err)
 		sendJSONResponse(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		return
 	}
@@ -241,12 +246,12 @@ func (a *apiConfig) handleTokenRevoke(w http.ResponseWriter, r *http.Request) {
 	sendJSONResponse(w, http.StatusNoContent, map[string]string{"success": "revoked"})
 }
 
-// used to refresh our refresh token
+// fetches bearer token from headers, verifies that refresh token is not revoked, sends new jwt
 func (a *apiConfig) handleTokenRefresh(w http.ResponseWriter, r *http.Request) {
 	// gets a refresh token from the header and find the user associated with the refresh token
 	authToken, err := auth.GetBearerToken(r.Header)
 	if err != nil {
-		fmt.Println("error getting bearer token", err)
+		logger.ErrorLogger.Printf("error getting bearer token %s \n", err)
 		sendJSONResponse(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized invalid getbearertoken"})
 		return
 	}
@@ -260,7 +265,7 @@ func (a *apiConfig) handleTokenRefresh(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// create a new jwt
-	returnToken, err := auth.MakeJWT(tokenDetails.UserID, a.jwtSecret, time.Duration(jwtTokenExiration))
+	returnToken, err := auth.MakeJWT(tokenDetails.UserID, a.jwtSecret, time.Duration(jwtTokenExiration)*time.Second)
 	if err != nil {
 		sendJSONResponse(w, http.StatusInternalServerError, map[string]string{"error": "error creating new jwt"})
 	}
@@ -290,6 +295,7 @@ func (a *apiConfig) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// decode the json into the loginRequest struct
 	var user loginRequest
 	if err := json.NewDecoder(r.Body).Decode(&user); err != nil {
+		logger.ErrorLogger.Printf("error decoding json %s \n", err)
 		sendJSONResponse(w, http.StatusBadRequest, map[string]string{"error": "invalid request payload"})
 		return
 	}
@@ -297,6 +303,7 @@ func (a *apiConfig) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// fetch all our users from the db TODO: fix this to fetch one user
 	users, err := a.db.GetAllUsers(r.Context())
 	if err != nil {
+		logger.ErrorLogger.Printf("error fetching database users %s \n", err)
 		sendJSONResponse(w, http.StatusInternalServerError, map[string]string{"error": "error retrieving users from db"})
 		return
 	}
@@ -305,6 +312,7 @@ func (a *apiConfig) handleLogin(w http.ResponseWriter, r *http.Request) {
 	for _, dbUser := range users {
 		if user.Email == dbUser.Email {
 			if err := auth.CheckPasswordHash(user.Password, dbUser.HashedPassword); err != nil {
+				logger.ErrorLogger.Printf("error with password %s \n", err)
 				sendJSONResponse(w, http.StatusUnauthorized, map[string]string{"error": "unathorized bad password"})
 				return
 			}
@@ -312,6 +320,7 @@ func (a *apiConfig) handleLogin(w http.ResponseWriter, r *http.Request) {
 			// create jwt token with 1 hour refresh
 			jwtToken, err := auth.MakeJWT(dbUser.ID, a.jwtSecret, time.Duration(jwtTokenExiration)*time.Second)
 			if err != nil {
+				logger.ErrorLogger.Printf("error creating jwt %s \n", err)
 				sendJSONResponse(w, http.StatusInternalServerError, map[string]string{"error": "error generating token"})
 				return
 			}
@@ -319,6 +328,7 @@ func (a *apiConfig) handleLogin(w http.ResponseWriter, r *http.Request) {
 			// create refresh token with 1 hour refresh
 			refreshToken, err := auth.MakeRefreshToken()
 			if err != nil {
+				logger.ErrorLogger.Printf("error creating refresh token %s \n", err)
 				sendJSONResponse(w, http.StatusInternalServerError, map[string]string{"error": "error generating refresh token"})
 				return
 			}
@@ -330,6 +340,7 @@ func (a *apiConfig) handleLogin(w http.ResponseWriter, r *http.Request) {
 			})
 
 			if err != nil {
+				logger.ErrorLogger.Printf("error creating token from db %s \n", err)
 				sendJSONResponse(w, http.StatusInternalServerError, map[string]string{"error": "error creating dbtoken"})
 				return
 			}
@@ -372,7 +383,7 @@ func (a *apiConfig) handleCreateChirp(w http.ResponseWriter, r *http.Request) {
 	// look up token
 	token, err := auth.GetBearerToken(r.Header)
 	if err != nil {
-		log.Printf("Error reading token unauthorized")
+		logger.ErrorLogger.Printf("error reading token unauthorized %s \n", err)
 		sendJSONResponse(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 	}
 
@@ -381,6 +392,7 @@ func (a *apiConfig) handleCreateChirp(w http.ResponseWriter, r *http.Request) {
 	fmt.Println("secret on server:", a.jwtSecret)
 	userUUID, err := auth.ValidateJWT(token, a.jwtSecret)
 	if err != nil {
+		logger.ErrorLogger.Printf("error validating jwt %s \n", err)
 		fmt.Println("error parsing with auth.ValidateJWT()", err)
 		sendJSONResponse(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		return
@@ -388,7 +400,7 @@ func (a *apiConfig) handleCreateChirp(w http.ResponseWriter, r *http.Request) {
 
 	var chirpReq ChirpRequest
 	if err := json.NewDecoder(r.Body).Decode(&chirpReq); err != nil {
-		log.Printf("Error decoding request: %s", err)
+		logger.ErrorLogger.Printf("error decoding json body %s \n", err)
 		sendJSONResponse(w, http.StatusInternalServerError, ChirpResponse{
 			Error: "Failed to decode request body",
 		})
@@ -397,23 +409,20 @@ func (a *apiConfig) handleCreateChirp(w http.ResponseWriter, r *http.Request) {
 
 	// if length is too large return error
 	if len(chirpReq.Body) > 140 {
-		log.Printf("Chirp body is too long: %d chars", len(chirpReq.Body))
-		sendJSONResponse(w, http.StatusBadRequest, ChirpResponse{
-			Error: "Chirp body exceeds 140 chars",
-		})
+		logAndRespond(w, http.StatusBadRequest, "chirp body is too long %d", fmt.Errorf("%d", len(chirpReq.Body)))
 		return
 	}
 
 	// clean the badwords
 	chirpReq.Body = cleanBadWords(chirpReq.Body, badWords)
-	fmt.Println("about to write to db for: ", userUUID.String())
+	logger.InfoLogger.Printf("about to write to db for: %s \n", userUUID.String())
 	// write to database
 	chirp, err := a.db.CreateChirp(r.Context(), database.CreateChirpParams{
 		Body:   chirpReq.Body,
 		UserID: userUUID,
 	})
 	if err != nil {
-		log.Printf("error creating chirp in database %s", err)
+		logger.ErrorLogger.Printf("error creating chirp in the database %s \n", err)
 	}
 
 	chirpResponse := ChirpResponse{
@@ -462,4 +471,10 @@ func (a *apiConfig) middlewareMetricsReset(w http.ResponseWriter, r *http.Reques
 	a.db.DeleteAllTokens(r.Context())
 	w.WriteHeader(http.StatusOK)
 	a.fileServerHits.Store(0)
+}
+
+// Helper function for error logging and JSON response
+func logAndRespond(w http.ResponseWriter, status int, message string, err error) {
+	logger.ErrorLogger.Printf("%s: %s\n", message, err)
+	sendJSONResponse(w, status, map[string]string{"error": message})
 }
