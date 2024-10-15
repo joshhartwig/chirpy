@@ -18,3 +18,13 @@ RETURNING *;
 -- name: GetAllUsers :many
 SELECT *
 FROM users;
+
+-- name: GetUserByEmail :one
+SELECT *
+FROM users
+WHERE email = $1;
+
+-- name: UpdateUserPassword :exec
+UPDATE users
+SET hashed_password = $1, updated_at = NOW()
+WHERE id = $2;

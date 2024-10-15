@@ -96,6 +96,8 @@ func main() {
 	mux.HandleFunc("GET /admin/metrics", apiCfg.middlewareMetricsReport)
 	mux.HandleFunc("POST /admin/reset", apiCfg.middlewareMetricsReset)
 
+	mux.HandleFunc("PUT /api/users", apiCfg.handleUpdatePassword)
+
 	mux.HandleFunc("POST /api/login", apiCfg.handleLogin)
 	mux.HandleFunc("POST /api/users", apiCfg.handleCreateUser)
 	mux.HandleFunc("POST /api/refresh", apiCfg.handleTokenRefresh)
@@ -154,6 +156,63 @@ func (a *apiConfig) handleGetChirps(w http.ResponseWriter, r *http.Request) {
 	})
 
 	sendJSONResponse(w, 200, chirpResponses)
+}
+
+// handleUpdatePassword allows a user to update a password via put request TODO: the logic on this is hokey at best
+func (a *apiConfig) handleUpdatePassword(w http.ResponseWriter, r *http.Request) {
+
+	// the format our password change comes in
+	type passwordChangeRequest struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+
+	// fetch token from header
+	token, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		logAndRespond(w, http.StatusBadRequest, "error fetching token from header", err)
+		return
+	}
+	// fetch the username from the token claim
+	jwtUserUUID, err := auth.ValidateJWT(token, a.jwtSecret)
+	if err != nil {
+		logAndRespond(w, http.StatusUnauthorized, "error getting userid from jwt", err)
+		return
+	}
+
+	// encode the response body into a struct
+	var pwdChangeReq passwordChangeRequest
+	if err := json.NewDecoder(r.Body).Decode(&pwdChangeReq); err != nil {
+		logAndRespond(w, http.StatusInternalServerError, "error decoding json body", err)
+		return
+	}
+
+	// fetch UUID from token and compare to UUID from db
+	dbUserUUID, err := a.db.GetUserIDByToken(r.Context(), token)
+	if jwtUserUUID != dbUserUUID {
+		// the user ids are not the same
+		logAndRespond(w, http.StatusUnauthorized, "the jwt userid and dbuserid does not match", err)
+		return
+	}
+	// hash the passed in password
+	hashedPwd, err := auth.HashPassword(pwdChangeReq.Password)
+	if err != nil {
+		logAndRespond(w, http.StatusInternalServerError, "error hashing password", err)
+		return
+	}
+
+	a.db.UpdateUserPassword(r.Context(), database.UpdateUserPasswordParams{
+		HashedPassword: hashedPwd,
+		ID:             dbUserUUID,
+	})
+
+	resUser := User{
+		ID:    dbUserUUID,
+		Email: pwdChangeReq.Email,
+	}
+
+	sendJSONResponse(w, 200, resUser)
+	// respond w/ 200 if success with updated user resource
 }
 
 // handleGetChirpsById returns a single chirp passed in by id
