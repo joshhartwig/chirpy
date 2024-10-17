@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -104,8 +105,10 @@ func main() {
 	mux.HandleFunc("POST /api/revoke", apiCfg.handleTokenRevoke)
 	mux.HandleFunc("POST /api/chirps", apiCfg.handleCreateChirp)
 	mux.HandleFunc("GET /api/chirps/{chirpID}", apiCfg.handleGetChirpsById)
+	mux.HandleFunc("DELETE /api/chirps/{chirpID}", apiCfg.handleDeleteChirp)
 	mux.HandleFunc("GET /api/healthz", apiCfg.handleReportHealth)
 	mux.HandleFunc("GET /api/chirps", apiCfg.handleGetChirps)
+	mux.HandleFunc("POST /api/polka/webhooks", apiCfg.handleSetUserToRed)
 
 	logger.InfoLogger.Printf("serving files from %s on port: %s\n", filePathRoot, port)
 	log.Fatal(srv.ListenAndServe())
@@ -158,6 +161,104 @@ func (a *apiConfig) handleGetChirps(w http.ResponseWriter, r *http.Request) {
 	sendJSONResponse(w, 200, chirpResponses)
 }
 
+// handleSetUserToRed upgrades a users red status in the database called by webhook
+func (a *apiConfig) handleSetUserToRed(w http.ResponseWriter, r *http.Request) {
+	type UserIDData struct {
+		UserID string `json:"user_id"`
+	}
+
+	type UpgradeEvent struct {
+		Event string     `json:"event"`
+		Data  UserIDData `json:"user_data"`
+	}
+
+	var event UpgradeEvent
+
+	if err := json.NewDecoder(r.Body).Decode(&event); err != nil {
+		logAndRespond(w, http.StatusInternalServerError, "error parsing response body", err)
+		return
+	}
+
+	if event.Event != "user.upgraded" {
+		logAndRespond(w, http.StatusNoContent, "event not wanted", errors.New("event not wanted"))
+		return
+	}
+
+	// convert the id into a uuid
+	parsedId, err := uuid.Parse(event.Data.UserID)
+	if err != nil {
+		logAndRespond(w, http.StatusInternalServerError, "unable to parse user id into uuid", err)
+		return
+	}
+
+	// fetch the user by id
+	user, err := a.db.GetUserByID(r.Context(), parsedId)
+	if err != nil {
+		logAndRespond(w, http.StatusNotFound, "unable to find user", err)
+		return
+	}
+
+	// if the user has an entry isChirpyRed and its already bool
+	if user.IsChirpyRed.Bool {
+		logAndRespond(w, http.StatusNotAcceptable, "user already a Red member", errors.New("already a Red member"))
+		return
+	}
+
+	err = a.db.UpgradeUserToChirpyRed(r.Context(), parsedId)
+	if err != nil {
+		logAndRespond(w, http.StatusInternalServerError, "unable to uprade", err)
+	}
+
+	sendJSONResponse(w, http.StatusNoContent, map[string]string{"success": "user upgraded"})
+
+}
+
+// handleDeleteChirp allows a user to delete a chirp if authenticated
+func (a *apiConfig) handleDeleteChirp(w http.ResponseWriter, r *http.Request) {
+	chirpId := r.PathValue("chirpID")
+	// check the jwt and fetch the claim
+	token, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		logAndRespond(w, http.StatusUnauthorized, "error getting jwt token", err)
+		return
+	}
+	// verify the user matches our the user for our chirpid
+	jwtUserUUID, err := auth.ValidateJWT(token, a.jwtSecret)
+	if err != nil {
+		logAndRespond(w, http.StatusUnauthorized, "unable to validate jwt", err)
+		return
+	}
+
+	//parse chirp id into uuid
+	chirpUUID, err := uuid.Parse(chirpId)
+	if err != nil {
+		logAndRespond(w, http.StatusUnauthorized, "unable to parse uuid from request body", err)
+		return
+	}
+
+	//write a query that looks up a chirp by id and verify the userid === jwtuserid
+	chirp, err := a.db.GetChirpByID(r.Context(), chirpUUID)
+	if err != nil {
+		logAndRespond(w, http.StatusNotFound, "unabled to find chirp by id", err)
+		return
+	}
+
+	// if these do not match unauthorized
+	if chirp.UserID != jwtUserUUID {
+		logAndRespond(w, http.StatusForbidden, "the userid of the chirp does not equal the user id in the jwt claim", err)
+		return
+	}
+
+	//write a query that deletes a chirp
+	if err := a.db.DeleteChirpByID(r.Context(), chirpUUID); err != nil {
+		logAndRespond(w, http.StatusInternalServerError, "unable to delete chirp", err)
+		return
+	}
+	// successfully deleted chirp
+	sendJSONResponse(w, http.StatusNoContent, map[string]string{"success": "deleted chirp"})
+
+}
+
 // handleUpdatePassword allows a user to update a password via put request TODO: the logic on this is hokey at best
 func (a *apiConfig) handleUpdatePassword(w http.ResponseWriter, r *http.Request) {
 
@@ -170,9 +271,10 @@ func (a *apiConfig) handleUpdatePassword(w http.ResponseWriter, r *http.Request)
 	// fetch token from header
 	token, err := auth.GetBearerToken(r.Header)
 	if err != nil {
-		logAndRespond(w, http.StatusBadRequest, "error fetching token from header", err)
+		logAndRespond(w, http.StatusUnauthorized, "error fetching token from header", err)
 		return
 	}
+
 	// fetch the username from the token claim
 	jwtUserUUID, err := auth.ValidateJWT(token, a.jwtSecret)
 	if err != nil {
@@ -187,13 +289,6 @@ func (a *apiConfig) handleUpdatePassword(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// fetch UUID from token and compare to UUID from db
-	dbUserUUID, err := a.db.GetUserIDByToken(r.Context(), token)
-	if jwtUserUUID != dbUserUUID {
-		// the user ids are not the same
-		logAndRespond(w, http.StatusUnauthorized, "the jwt userid and dbuserid does not match", err)
-		return
-	}
 	// hash the passed in password
 	hashedPwd, err := auth.HashPassword(pwdChangeReq.Password)
 	if err != nil {
@@ -203,44 +298,50 @@ func (a *apiConfig) handleUpdatePassword(w http.ResponseWriter, r *http.Request)
 
 	a.db.UpdateUserPassword(r.Context(), database.UpdateUserPasswordParams{
 		HashedPassword: hashedPwd,
-		ID:             dbUserUUID,
+		ID:             jwtUserUUID,
 	})
 
+	// create a response user and send it back
 	resUser := User{
-		ID:    dbUserUUID,
+		ID:    jwtUserUUID,
 		Email: pwdChangeReq.Email,
 	}
 
-	sendJSONResponse(w, 200, resUser)
-	// respond w/ 200 if success with updated user resource
+	sendJSONResponse(w, http.StatusOK, resUser)
 }
 
-// handleGetChirpsById returns a single chirp passed in by id
+// handleGetChirpsById returns a single chirp passed in by id TODO: add authorization to this and check jwt send 404 if not found
 func (a *apiConfig) handleGetChirpsById(w http.ResponseWriter, r *http.Request) {
+	// fetch the id from the path
 	chirpId := r.PathValue("chirpID")
 
+	// create an object for our response
 	var chirpResp ChirpResponse
 	if chirpId == "" {
-		chirpResp.Error = fmt.Sprintf("unable to find chirp id of %s please try again", chirpId)
-		logger.ErrorLogger.Printf("unabled to find chirpid of %s please try again", chirpId)
-		sendJSONResponse(w, 404, chirpResp)
+		logAndRespond(w, http.StatusUnauthorized, "chirpId not found", errors.New("no chirp found"))
 		return
 	}
 
-	chirps, err := a.db.GetAllChirps(r.Context())
+	// parse the chirp into a uuid
+	chirpUUID, err := uuid.Parse(chirpId)
 	if err != nil {
-		logger.ErrorLogger.Printf("error fetching chirps %s \n", err)
+		logAndRespond(w, http.StatusInternalServerError, "unable to parse uuid from chirp", err)
+		return
 	}
 
-	for _, chirp := range chirps {
-		if chirp.ID.String() == chirpId {
-			chirpResp.Id = chirp.ID
-			chirpResp.Body = chirp.Body
-			chirpResp.Created_At = chirp.CreatedAt
-			chirpResp.Updated_At = chirp.UpdatedAt
-			chirpResp.UserID = chirp.UserID
-		}
+	// try and fetch from db
+	chirp, err := a.db.GetChirpByID(r.Context(), chirpUUID)
+	if err != nil {
+		logAndRespond(w, http.StatusNotFound, "unable to fetch a chirp by that id", err)
+		return
 	}
+
+	// form the response
+	chirpResp.Id = chirp.ID
+	chirpResp.Body = chirp.Body
+	chirpResp.Created_At = chirp.CreatedAt
+	chirpResp.Updated_At = chirp.UpdatedAt
+	chirpResp.UserID = chirp.UserID
 
 	sendJSONResponse(w, 200, chirpResp)
 }
@@ -315,7 +416,6 @@ func (a *apiConfig) handleTokenRefresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fmt.Println("refresh token: ", authToken)
 	// the sql query will only return a token if revoked = null and expired > now
 	tokenDetails, err := a.db.GetTokenDetails(r.Context(), authToken)
 	if err != nil {
@@ -447,12 +547,9 @@ func (a *apiConfig) handleCreateChirp(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// fetch uuid from token
-	fmt.Println("running validate jwt with:", token)
-	fmt.Println("secret on server:", a.jwtSecret)
 	userUUID, err := auth.ValidateJWT(token, a.jwtSecret)
 	if err != nil {
 		logger.ErrorLogger.Printf("error validating jwt %s \n", err)
-		fmt.Println("error parsing with auth.ValidateJWT()", err)
 		sendJSONResponse(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		return
 	}

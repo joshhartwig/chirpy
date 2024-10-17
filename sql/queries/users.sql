@@ -28,3 +28,13 @@ WHERE email = $1;
 UPDATE users
 SET hashed_password = $1, updated_at = NOW()
 WHERE id = $2;
+
+-- name: UpgradeUserToChirpyRed :exec
+UPDATE users
+SET is_chirpy_red = TRUE, updated_at = NOW()
+WHERE id = $1;
+
+-- name: GetUserByID :one
+SELECT *
+FROM users
+WHERE id = $1;
