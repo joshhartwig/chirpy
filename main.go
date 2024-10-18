@@ -111,7 +111,7 @@ func main() {
 	mux.HandleFunc("GET /api/chirps/{chirpID}", apiCfg.handleGetChirpsById)
 	mux.HandleFunc("DELETE /api/chirps/{chirpID}", apiCfg.handleDeleteChirp)
 	mux.HandleFunc("GET /api/healthz", apiCfg.handleReportHealth)
-	mux.HandleFunc("GET /api/chirps", apiCfg.handleGetChirps)
+	mux.HandleFunc("GET /api/chirps/", apiCfg.handleGetChirps)
 	mux.HandleFunc("POST /api/polka/webhooks", apiCfg.handleSetUserToRed)
 
 	logger.InfoLogger.Printf("serving files from %s on port: %s\n", filePathRoot, port)
@@ -142,6 +142,8 @@ func sendJSONResponse(w http.ResponseWriter, statusCode int, data interface{}) {
 
 // handleGetChirps returns all chirps sorted by created_at in ascending order
 func (a *apiConfig) handleGetChirps(w http.ResponseWriter, r *http.Request) {
+	author := r.URL.Query().Get("author_id")
+
 	chirps, err := a.db.GetAllChirps(r.Context())
 	if err != nil {
 		logger.ErrorLogger.Printf("error fetching chirps %s", err)
@@ -149,13 +151,25 @@ func (a *apiConfig) handleGetChirps(w http.ResponseWriter, r *http.Request) {
 
 	chirpResponses := []ChirpResponse{}
 	for _, chirp := range chirps {
-		chirpResponses = append(chirpResponses, ChirpResponse{
-			Id:         chirp.ID,
-			Body:       chirp.Body,
-			Created_At: chirp.CreatedAt,
-			Updated_At: chirp.UpdatedAt,
-			UserID:     chirp.UserID,
-		})
+		if author == "" {
+			chirpResponses = append(chirpResponses, ChirpResponse{
+				Id:         chirp.ID,
+				Body:       chirp.Body,
+				Created_At: chirp.CreatedAt,
+				Updated_At: chirp.UpdatedAt,
+				UserID:     chirp.UserID,
+			})
+		} else {
+			if chirp.UserID.String() == author {
+				chirpResponses = append(chirpResponses, ChirpResponse{
+					Id:         chirp.ID,
+					Body:       chirp.Body,
+					Created_At: chirp.CreatedAt,
+					Updated_At: chirp.UpdatedAt,
+					UserID:     chirp.UserID,
+				})
+			}
+		}
 	}
 
 	sort.Slice(chirpResponses, func(i, j int) bool {
