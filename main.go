@@ -33,6 +33,7 @@ type User struct {
 	Email         string    `json:"email"`
 	Token         string    `json:"token"`
 	Refresh_Token string    `json:"refresh_token"`
+	Is_Chirpy_Red bool      `json:"is_chirpy_red"`
 }
 
 type ChirpRequest struct {
@@ -54,6 +55,7 @@ type apiConfig struct {
 	db             *database.Queries
 	platform       string
 	jwtSecret      string
+	webhookApiKey  string
 }
 
 /*
@@ -65,7 +67,8 @@ func main() {
 	dbURL := os.Getenv("DB_URL")         // fetch the db_url connection string
 	jwtSecret := os.Getenv("JWT_SECRET") // fetch jwt secret
 	platform := os.Getenv("PLATFORM")
-	db, err := sql.Open("postgres", dbURL) // open the db w/ sql.open
+	webhookApiKey := os.Getenv("POLKA_KEY") // used for webhook integration
+	db, err := sql.Open("postgres", dbURL)  // open the db w/ sql.open
 	if err != nil {
 		log.Fatalf("error opening db %v", err)
 		return
@@ -81,6 +84,7 @@ func main() {
 		db:             dbQueries,
 		platform:       platform,
 		jwtSecret:      jwtSecret,
+		webhookApiKey:  webhookApiKey,
 	}
 
 	// create a router (aka mux) for our project
@@ -169,11 +173,20 @@ func (a *apiConfig) handleSetUserToRed(w http.ResponseWriter, r *http.Request) {
 
 	type UpgradeEvent struct {
 		Event string     `json:"event"`
-		Data  UserIDData `json:"user_data"`
+		Data  UserIDData `json:"data"`
+	}
+
+	apiKey, err := auth.GetAPIKey(r.Header)
+	if err != nil {
+		logAndRespond(w, http.StatusUnauthorized, "apikey invalid", errors.New("unauthorized"))
+		return
+	}
+	if apiKey != a.webhookApiKey {
+		logAndRespond(w, http.StatusUnauthorized, "apikey invalid", errors.New("unauthorized"))
+		return
 	}
 
 	var event UpgradeEvent
-
 	if err := json.NewDecoder(r.Body).Decode(&event); err != nil {
 		logAndRespond(w, http.StatusInternalServerError, "error parsing response body", err)
 		return
@@ -204,12 +217,28 @@ func (a *apiConfig) handleSetUserToRed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// upgrade the user to red
 	err = a.db.UpgradeUserToChirpyRed(r.Context(), parsedId)
 	if err != nil {
 		logAndRespond(w, http.StatusInternalServerError, "unable to uprade", err)
 	}
 
-	sendJSONResponse(w, http.StatusNoContent, map[string]string{"success": "user upgraded"})
+	updatedUser, err := a.db.GetUserByID(r.Context(), parsedId)
+	if err != nil {
+		logAndRespond(w, http.StatusInternalServerError, "error fetching updated record", err)
+		return
+	}
+
+	// response struct
+	resUser := User{
+		ID:            updatedUser.ID,
+		Updated_At:    updatedUser.UpdatedAt,
+		Created_At:    updatedUser.CreatedAt,
+		Email:         updatedUser.Email,
+		Is_Chirpy_Red: updatedUser.IsChirpyRed.Bool,
+	}
+
+	sendJSONResponse(w, http.StatusNoContent, resUser)
 
 }
 
@@ -512,6 +541,7 @@ func (a *apiConfig) handleLogin(w http.ResponseWriter, r *http.Request) {
 				Email:         dbUser.Email,
 				Token:         jwtToken,
 				Refresh_Token: dbToken.Token,
+				Is_Chirpy_Red: dbUser.IsChirpyRed.Bool,
 			}
 
 			sendJSONResponse(w, http.StatusOK, responseUser)

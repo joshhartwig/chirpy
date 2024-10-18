@@ -120,3 +120,24 @@ func MakeRefreshToken() (string, error) {
 	token := hex.EncodeToString(tokenBytes) // encode it to hex string
 	return token, nil
 }
+
+// returns api key from header, used for webhook integration
+func GetAPIKey(headers http.Header) (string, error) {
+	// header format Bearer TOKEN_STRING
+	authHeader := headers.Get("Authorization")
+
+	if authHeader == "" {
+		return "", errors.New("no Auth header found")
+	}
+
+	token, found := strings.CutPrefix(authHeader, "ApiKey")
+	if !found {
+		return "", errors.New("did not find a Bearer token in auth header")
+	}
+
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return "", errors.New("no data in token")
+	}
+	return token, nil
+}
