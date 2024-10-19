@@ -27,13 +27,13 @@ const jwtTokenExiration int = 3600
 
 // our user account struct
 type User struct {
-	ID            uuid.UUID `json:"id"`
-	Created_At    time.Time `json:"created_at"`
-	Updated_At    time.Time `json:"updated_at"`
-	Email         string    `json:"email"`
-	Token         string    `json:"token"`
-	Refresh_Token string    `json:"refresh_token"`
-	Is_Chirpy_Red bool      `json:"is_chirpy_red"`
+	ID           uuid.UUID `json:"id"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+	Email        string    `json:"email"`
+	Token        string    `json:"token"`
+	RefreshToken string    `json:"refresh_token"`
+	IsChirpyRed  bool      `json:"is_chirpy_red"`
 }
 
 type ChirpRequest struct {
@@ -41,12 +41,12 @@ type ChirpRequest struct {
 }
 
 type ChirpResponse struct {
-	Error      string    `json:"error,omitempty"`
-	Body       string    `json:"body,omitempty"`
-	Id         uuid.UUID `json:"id"`
-	Created_At time.Time `json:"created_at"`
-	Updated_At time.Time `json:"updated_at"`
-	UserID     uuid.UUID `json:"user_id"`
+	Error     string    `json:"error,omitempty"`
+	Body      string    `json:"body,omitempty"`
+	Id        uuid.UUID `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	UserID    uuid.UUID `json:"user_id"`
 }
 
 // used to manage configuration for server
@@ -143,6 +143,12 @@ func sendJSONResponse(w http.ResponseWriter, statusCode int, data interface{}) {
 // handleGetChirps returns all chirps sorted by created_at in ascending order
 func (a *apiConfig) handleGetChirps(w http.ResponseWriter, r *http.Request) {
 	author := r.URL.Query().Get("author_id")
+	sortOrder := r.URL.Query().Get("sort")
+
+	// set the sort order if its not provided
+	if sortOrder == "" {
+		sortOrder = "asc"
+	}
 
 	chirps, err := a.db.GetAllChirps(r.Context())
 	if err != nil {
@@ -153,27 +159,30 @@ func (a *apiConfig) handleGetChirps(w http.ResponseWriter, r *http.Request) {
 	for _, chirp := range chirps {
 		if author == "" {
 			chirpResponses = append(chirpResponses, ChirpResponse{
-				Id:         chirp.ID,
-				Body:       chirp.Body,
-				Created_At: chirp.CreatedAt,
-				Updated_At: chirp.UpdatedAt,
-				UserID:     chirp.UserID,
+				Id:        chirp.ID,
+				Body:      chirp.Body,
+				CreatedAt: chirp.CreatedAt,
+				UpdatedAt: chirp.UpdatedAt,
+				UserID:    chirp.UserID,
 			})
 		} else {
 			if chirp.UserID.String() == author {
 				chirpResponses = append(chirpResponses, ChirpResponse{
-					Id:         chirp.ID,
-					Body:       chirp.Body,
-					Created_At: chirp.CreatedAt,
-					Updated_At: chirp.UpdatedAt,
-					UserID:     chirp.UserID,
+					Id:        chirp.ID,
+					Body:      chirp.Body,
+					CreatedAt: chirp.CreatedAt,
+					UpdatedAt: chirp.UpdatedAt,
+					UserID:    chirp.UserID,
 				})
 			}
 		}
 	}
 
 	sort.Slice(chirpResponses, func(i, j int) bool {
-		return chirpResponses[i].Created_At.Before(chirpResponses[j].Created_At)
+		if sortOrder == "desc" {
+			return chirpResponses[i].CreatedAt.After(chirpResponses[j].CreatedAt)
+		}
+		return chirpResponses[i].CreatedAt.Before(chirpResponses[j].CreatedAt)
 	})
 
 	sendJSONResponse(w, 200, chirpResponses)
@@ -245,11 +254,11 @@ func (a *apiConfig) handleSetUserToRed(w http.ResponseWriter, r *http.Request) {
 
 	// response struct
 	resUser := User{
-		ID:            updatedUser.ID,
-		Updated_At:    updatedUser.UpdatedAt,
-		Created_At:    updatedUser.CreatedAt,
-		Email:         updatedUser.Email,
-		Is_Chirpy_Red: updatedUser.IsChirpyRed.Bool,
+		ID:          updatedUser.ID,
+		UpdatedAt:   updatedUser.UpdatedAt,
+		CreatedAt:   updatedUser.CreatedAt,
+		Email:       updatedUser.Email,
+		IsChirpyRed: updatedUser.IsChirpyRed.Bool,
 	}
 
 	sendJSONResponse(w, http.StatusNoContent, resUser)
@@ -302,7 +311,7 @@ func (a *apiConfig) handleDeleteChirp(w http.ResponseWriter, r *http.Request) {
 
 }
 
-// handleUpdatePassword allows a user to update a password via put request TODO: the logic on this is hokey at best
+// handleUpdatePassword allows a user to update a password via
 func (a *apiConfig) handleUpdatePassword(w http.ResponseWriter, r *http.Request) {
 
 	// the format our password change comes in
@@ -353,13 +362,11 @@ func (a *apiConfig) handleUpdatePassword(w http.ResponseWriter, r *http.Request)
 	sendJSONResponse(w, http.StatusOK, resUser)
 }
 
-// handleGetChirpsById returns a single chirp passed in by id TODO: add authorization to this and check jwt send 404 if not found
+// handleGetChirpsById returns a single chirp passed in by id
 func (a *apiConfig) handleGetChirpsById(w http.ResponseWriter, r *http.Request) {
 	// fetch the id from the path
 	chirpId := r.PathValue("chirpID")
 
-	// create an object for our response
-	var chirpResp ChirpResponse
 	if chirpId == "" {
 		logAndRespond(w, http.StatusUnauthorized, "chirpId not found", errors.New("no chirp found"))
 		return
@@ -379,14 +386,13 @@ func (a *apiConfig) handleGetChirpsById(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// form the response
-	chirpResp.Id = chirp.ID
-	chirpResp.Body = chirp.Body
-	chirpResp.Created_At = chirp.CreatedAt
-	chirpResp.Updated_At = chirp.UpdatedAt
-	chirpResp.UserID = chirp.UserID
-
-	sendJSONResponse(w, 200, chirpResp)
+	sendJSONResponse(w, 200, ChirpResponse{
+		Id:        chirp.ID,
+		Body:      chirp.Body,
+		UpdatedAt: chirp.UpdatedAt,
+		CreatedAt: chirp.CreatedAt,
+		UserID:    chirp.UserID,
+	})
 }
 
 // handleCreateUser creates a new user in the database
@@ -416,14 +422,12 @@ func (a *apiConfig) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		logger.ErrorLogger.Printf("error creating user in database %s \n", err)
 	}
 
-	dbUser := User{
-		ID:         user.ID,
-		Created_At: user.CreatedAt,
-		Updated_At: user.UpdatedAt,
-		Email:      user.Email,
-	}
-
-	sendJSONResponse(w, http.StatusCreated, dbUser)
+	sendJSONResponse(w, http.StatusCreated, User{
+		ID:        user.ID,
+		CreatedAt: user.CreatedAt,
+		UpdatedAt: user.UpdatedAt,
+		Email:     user.Email,
+	})
 }
 
 // fetches bearer token from headers, matches it in db and revokes the refresh token in database
@@ -462,6 +466,7 @@ func (a *apiConfig) handleTokenRefresh(w http.ResponseWriter, r *http.Request) {
 	// the sql query will only return a token if revoked = null and expired > now
 	tokenDetails, err := a.db.GetTokenDetails(r.Context(), authToken)
 	if err != nil {
+		logger.ErrorLogger.Printf("unable to get token details %s \n", err)
 		sendJSONResponse(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized gettokendetails"})
 		return
 	}
@@ -469,7 +474,9 @@ func (a *apiConfig) handleTokenRefresh(w http.ResponseWriter, r *http.Request) {
 	// create a new jwt
 	returnToken, err := auth.MakeJWT(tokenDetails.UserID, a.jwtSecret, time.Duration(jwtTokenExiration)*time.Second)
 	if err != nil {
+		logger.ErrorLogger.Printf("error to create jwt token %s \n", err)
 		sendJSONResponse(w, http.StatusInternalServerError, map[string]string{"error": "error creating new jwt"})
+		return
 	}
 
 	// return our jwt
@@ -486,7 +493,7 @@ func CheckValidityRefreshToken(tokenObj *database.RefreshToken) bool {
 	return notExpired && notRevoked
 }
 
-// TODO: clean this up, the naming is all over the place
+// recieves uname / pass returns jwt and access token
 func (a *apiConfig) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// struct for login request
 	type loginRequest struct {
@@ -547,18 +554,15 @@ func (a *apiConfig) handleLogin(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
-			// create the response and send it back in json form
-			responseUser := User{
-				ID:            dbUser.ID,
-				Created_At:    dbUser.CreatedAt,
-				Updated_At:    dbUser.UpdatedAt,
-				Email:         dbUser.Email,
-				Token:         jwtToken,
-				Refresh_Token: dbToken.Token,
-				Is_Chirpy_Red: dbUser.IsChirpyRed.Bool,
-			}
-
-			sendJSONResponse(w, http.StatusOK, responseUser)
+			sendJSONResponse(w, http.StatusOK, User{
+				ID:           dbUser.ID,
+				CreatedAt:    dbUser.CreatedAt,
+				UpdatedAt:    dbUser.UpdatedAt,
+				Email:        dbUser.Email,
+				Token:        jwtToken,
+				RefreshToken: dbToken.Token,
+				IsChirpyRed:  dbUser.IsChirpyRed.Bool,
+			})
 			return
 		}
 	}
@@ -588,6 +592,7 @@ func (a *apiConfig) handleCreateChirp(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		logger.ErrorLogger.Printf("error reading token unauthorized %s \n", err)
 		sendJSONResponse(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
 	}
 
 	// fetch uuid from token
@@ -623,18 +628,17 @@ func (a *apiConfig) handleCreateChirp(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		logger.ErrorLogger.Printf("error creating chirp in the database %s \n", err)
-	}
-
-	chirpResponse := ChirpResponse{
-		Body:       chirp.Body,
-		Id:         chirp.ID,
-		Created_At: chirp.CreatedAt,
-		Updated_At: chirp.UpdatedAt,
-		UserID:     chirp.UserID,
+		return
 	}
 
 	// send response
-	sendJSONResponse(w, http.StatusCreated, chirpResponse)
+	sendJSONResponse(w, http.StatusCreated, ChirpResponse{
+		Body:      chirp.Body,
+		Id:        chirp.ID,
+		CreatedAt: chirp.CreatedAt,
+		UpdatedAt: chirp.UpdatedAt,
+		UserID:    chirp.UserID,
+	})
 }
 
 // incrementFileServerHitsMiddleware increments the file server hits counter

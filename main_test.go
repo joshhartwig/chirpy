@@ -1,6 +1,8 @@
 package main
 
-import "testing"
+import (
+	"testing"
+)
 
 func TestCleanBadWords(t *testing.T) {
 	badwords := []string{"kerfuffle", "sharbert", "fornax"}

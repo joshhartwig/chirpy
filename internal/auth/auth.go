@@ -59,7 +59,6 @@ func MakeJWT(userId uuid.UUID, tokenSecret string, expiresIn time.Duration) (str
 // ValidateJWT validates a JWT token and extracts the user ID from the subject claim.
 func ValidateJWT(tokenString, tokenSecret string) (uuid.UUID, error) {
 	claims := &CustomClaims{}
-	fmt.Println("ValidateJWT() tokenstring:tokensecret", tokenString, tokenSecret)
 	token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
