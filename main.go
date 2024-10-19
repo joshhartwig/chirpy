@@ -353,13 +353,10 @@ func (a *apiConfig) handleUpdatePassword(w http.ResponseWriter, r *http.Request)
 		ID:             jwtUserUUID,
 	})
 
-	// create a response user and send it back
-	resUser := User{
+	sendJSONResponse(w, http.StatusOK, User{
 		ID:    jwtUserUUID,
 		Email: pwdChangeReq.Email,
-	}
-
-	sendJSONResponse(w, http.StatusOK, resUser)
+	})
 }
 
 // handleGetChirpsById returns a single chirp passed in by id
@@ -509,7 +506,7 @@ func (a *apiConfig) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// fetch all our users from the db TODO: fix this to fetch one user
+	// fetch all our users from the db
 	users, err := a.db.GetAllUsers(r.Context())
 	if err != nil {
 		logger.ErrorLogger.Printf("error fetching database users %s \n", err)
